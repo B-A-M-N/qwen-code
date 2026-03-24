@@ -57,6 +57,11 @@ import {
   tokenLimit,
 } from '@qwen-code/qwen-code-core/src/core/tokenLimits.js';
 import { useImagePaste, type WebViewImageMessage } from './hooks/useImage.js';
+import {
+  buildSkillCompletionItems,
+  isSkillsSecondaryQuery,
+  shouldOpenSkillsSecondaryPicker,
+} from './utils/skillsCompletion.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
@@ -93,9 +98,7 @@ export const App: React.FC = () => {
   const [availableCommands, setAvailableCommands] = useState<
     AvailableCommand[]
   >([]);
-  const [availableSkills, setAvailableSkills] = useState<
-    Array<{ name: string; description: string }>
-  >([]);
+  const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [showModelSelector, setShowModelSelector] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -154,25 +157,8 @@ export const App: React.FC = () => {
 
         return allItems;
       } else {
-        // Secondary picker: if query starts with "skills " (after /),
-        // show skill list instead of top-level commands
-        const skillsMatch = query.match(/^skills\s+(.*)/i);
-        if (skillsMatch && availableSkills.length > 0) {
-          const skillQuery = skillsMatch[1].toLowerCase();
-          const skillItems: CompletionItem[] = availableSkills.map((skill) => ({
-            id: `skill:${skill.name}`,
-            label: skill.name,
-            description: skill.description,
-            type: 'command' as const,
-            group: 'Skills',
-            value: `skills ${skill.name}`,
-          }));
-          return skillItems.filter(
-            (item) =>
-              item.label.toLowerCase().includes(skillQuery) ||
-              (item.description &&
-                item.description.toLowerCase().includes(skillQuery)),
-          );
+        if (availableSkills.length > 0 && isSkillsSecondaryQuery(query)) {
+          return buildSkillCompletionItems(availableSkills, query);
         }
 
         // Handle slash commands with grouping
@@ -303,6 +289,22 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     workspaceFilesSignature,
+    completion.isOpen,
+    completion.triggerChar,
+    completion.query,
+  ]);
+
+  useEffect(() => {
+    if (
+      completion.isOpen &&
+      completion.triggerChar === '/' &&
+      isSkillsSecondaryQuery(completion.query)
+    ) {
+      completion.refreshCompletion();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    availableSkills,
     completion.isOpen,
     completion.triggerChar,
     completion.query,
@@ -651,7 +653,7 @@ export const App: React.FC = () => {
         // Special case: /skills always uses fill behavior (Enter = Tab) to
         // allow the secondary skill picker to appear.
         const serverCmd = availableCommands.find((c) => c.name === itemId);
-        const isSkillsCmd = itemId === 'skills';
+        const isSkillsCmd = shouldOpenSkillsSecondaryPicker(item);
         if (serverCmd && !fillOnly && !isSkillsCmd) {
           // Clear the trigger text since we're sending the command
           clearTriggerText();
@@ -758,6 +760,18 @@ export const App: React.FC = () => {
         newRange.collapse(false);
         sel?.removeAllRanges();
         sel?.addRange(newRange);
+
+        if (shouldOpenSkillsSecondaryPicker(item)) {
+          const rangeRect = newRange.getBoundingClientRect();
+          const inputRect = inputElement.getBoundingClientRect();
+          const position =
+            rangeRect.top > 0 || rangeRect.left > 0
+              ? { top: rangeRect.top, left: rangeRect.left }
+              : { top: inputRect.top, left: inputRect.left };
+
+          void completion.openCompletion('/', `${insertValue} `, position);
+          return;
+        }
       }
 
       // Close the completion menu
