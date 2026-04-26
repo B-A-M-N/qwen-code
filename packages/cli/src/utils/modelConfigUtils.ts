@@ -101,13 +101,15 @@ export function resolveCliGenerationConfig(
     const providers = settings.modelProviders[authType];
     if (providers && Array.isArray(providers)) {
       // Determine the requested model based on auth type and inputs
-      // Priority: argv.model > env var > settings.model.name
+      // Priority: argv.model > settings.model.name > env var (prevent env override)
+      // If settings.model.name is set, it takes precedence over env vars to avoid
+      // env-matched provider overriding user's explicit model choice.
       const requestedModel =
         authType === AuthType.USE_OPENAI
           ? argv.model ||
+            settings.model?.name ||
             env['OPENAI_MODEL'] ||
-            env['QWEN_MODEL'] ||
-            settings.model?.name
+            env['QWEN_MODEL']
           : argv.model || settings.model?.name;
 
       // Only look up modelProvider if we have a requested model
