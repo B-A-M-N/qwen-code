@@ -247,22 +247,7 @@ export function resolveModelConfig(
   );
 
   // ---- Env override: QWEN_CODE_API_TIMEOUT_MS ----
-  // Precedence: modelProvider > env > settings > default (CLI doesn't set timeout)
-  const modelProviderSetTimeout =
-    modelProvider?.generationConfig?.timeout !== undefined;
-  if (!modelProviderSetTimeout) {
-    const envTimeout = env['QWEN_CODE_API_TIMEOUT_MS'];
-    if (envTimeout !== undefined) {
-      const parsed = Number(envTimeout);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        generationConfig.timeout = Math.floor(parsed);
-        sources['timeout'] = {
-          kind: 'env',
-          envKey: 'QWEN_CODE_API_TIMEOUT_MS',
-        };
-      }
-    }
-  }
+  applyTimeoutEnvOverride(generationConfig, sources, env, modelProvider);
 
   // Build final config
   const config: ContentGeneratorConfig = {
@@ -343,22 +328,7 @@ function resolveQwenOAuthConfig(
   );
 
   // ---- Env override: QWEN_CODE_API_TIMEOUT_MS ----
-  // Precedence: modelProvider > env > settings > default
-  const modelProviderSetTimeoutOAuth =
-    modelProvider?.generationConfig?.timeout !== undefined;
-  if (!modelProviderSetTimeoutOAuth) {
-    const envTimeoutOAuth = input.env['QWEN_CODE_API_TIMEOUT_MS'];
-    if (envTimeoutOAuth !== undefined) {
-      const parsed = Number(envTimeoutOAuth);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        generationConfig.timeout = Math.floor(parsed);
-        sources['timeout'] = {
-          kind: 'env',
-          envKey: 'QWEN_CODE_API_TIMEOUT_MS',
-        };
-      }
-    }
-  }
+  applyTimeoutEnvOverride(generationConfig, sources, input.env, modelProvider);
 
   const config: ContentGeneratorConfig = {
     authType: AuthType.QWEN_OAUTH,
@@ -369,6 +339,33 @@ function resolveQwenOAuthConfig(
   };
 
   return { config, sources, warnings };
+}
+
+/**
+ * Apply QWEN_CODE_API_TIMEOUT_MS env override to generation config.
+ * Precedence: modelProvider > env > settings > default.
+ */
+function applyTimeoutEnvOverride(
+  generationConfig: Partial<ContentGeneratorConfig>,
+  sources: ConfigSources,
+  env: Record<string, string | undefined>,
+  modelProvider?: ModelProviderConfig,
+): void {
+  const modelProviderSetTimeout =
+    modelProvider?.generationConfig?.timeout !== undefined;
+  if (!modelProviderSetTimeout) {
+    const envTimeout = env['QWEN_CODE_API_TIMEOUT_MS'];
+    if (envTimeout !== undefined) {
+      const parsed = Number(envTimeout);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        generationConfig.timeout = Math.floor(parsed);
+        sources['timeout'] = {
+          kind: 'env',
+          envKey: 'QWEN_CODE_API_TIMEOUT_MS',
+        };
+      }
+    }
+  }
 }
 
 /**
