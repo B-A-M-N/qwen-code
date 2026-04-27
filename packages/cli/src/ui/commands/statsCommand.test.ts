@@ -478,5 +478,97 @@ describe('statsCommand', () => {
       // 1M input tokens * $0.30/M = $0.30
       expect(result.content).toContain('Estimated cost: $0.3000');
     });
+
+    it('stats model includes thoughts tokens in cost calculation', async () => {
+      const modelSubCommand = statsCommand.subCommands?.find(
+        (sc) => sc.name === 'model',
+      );
+      if (!modelSubCommand?.action) throw new Error('Subcommand has no action');
+
+      const context = createMockCommandContext({
+        executionMode: 'non_interactive',
+      });
+      (context.services.settings as unknown as Record<string, unknown>)[
+        'merged'
+      ] = {
+        modelPricing: {
+          'test-model': {
+            inputPerMillionTokens: 0.3,
+            outputPerMillionTokens: 1.2,
+          },
+        },
+      };
+      // Set up model metrics with thoughts tokens
+      context.session.stats.metrics.models = {
+        'test-model': {
+          tokens: {
+            prompt: 1_000_000,
+            candidates: 500_000,
+            cached: 0,
+            total: 1_800_000,
+            thoughts: 300_000, // Thoughts should be included in output cost
+            tool: 0,
+          },
+          api: {
+            totalRequests: 10,
+            totalErrors: 0,
+            totalLatencyMs: 0,
+          },
+        },
+      };
+
+      const result = (await modelSubCommand.action(context, '')) as {
+        type: string;
+        content: string;
+      };
+
+      expect(result.type).toBe('message');
+      // 1M input * $0.30/M = $0.30
+      // 800K output (500K candidates + 300K thoughts) * $1.20/M = $0.96
+      // Total = $1.26
+      expect(result.content).toContain('Estimated cost: $1.2600');
+    });
+
+    it('stats model shows no cost when thoughts > 0 but no pricing configured', async () => {
+      const modelSubCommand = statsCommand.subCommands?.find(
+        (sc) => sc.name === 'model',
+      );
+      if (!modelSubCommand?.action) throw new Error('Subcommand has no action');
+
+      const context = createMockCommandContext({
+        executionMode: 'non_interactive',
+      });
+      // No pricing configured
+      (context.services.settings as unknown as Record<string, unknown>)[
+        'merged'
+      ] = {};
+
+      context.session.stats.metrics.models = {
+        'test-model': {
+          tokens: {
+            prompt: 1_000_000,
+            candidates: 500_000,
+            cached: 0,
+            total: 1_800_000,
+            thoughts: 300_000, // Has thoughts but no pricing
+            tool: 0,
+          },
+          api: {
+            totalRequests: 10,
+            totalErrors: 0,
+            totalLatencyMs: 0,
+          },
+        },
+      };
+
+      const result = (await modelSubCommand.action(context, '')) as {
+        type: string;
+        content: string;
+      };
+
+      expect(result.type).toBe('message');
+      // Should NOT show cost because no pricing is configured
+      expect(result.content).not.toContain('Estimated cost');
+    });
   });
 });

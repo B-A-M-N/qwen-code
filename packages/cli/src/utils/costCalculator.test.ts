@@ -202,4 +202,65 @@ describe('calculateCost', () => {
     // Verify the toFixed(4) formatting that the UI uses
     expect(cost?.toFixed(4)).toBe('0.9839');
   });
+
+  it('returns null for negative input tokens', () => {
+    const cost = calculateCost({
+      inputTokens: -100,
+      outputTokens: 500,
+      pricing: {
+        inputPerMillionTokens: 0.3,
+        outputPerMillionTokens: 1.2,
+      },
+    });
+
+    expect(cost).toBeNull();
+  });
+
+  it('returns null for negative output tokens', () => {
+    const cost = calculateCost({
+      inputTokens: 1000,
+      outputTokens: -500,
+      pricing: {
+        inputPerMillionTokens: 0.3,
+        outputPerMillionTokens: 1.2,
+      },
+    });
+
+    expect(cost).toBeNull();
+  });
+
+  it('returns null for both negative token counts', () => {
+    const cost = calculateCost({
+      inputTokens: -1000,
+      outputTokens: -500,
+      pricing: {
+        inputPerMillionTokens: 0.3,
+        outputPerMillionTokens: 1.2,
+      },
+    });
+
+    expect(cost).toBeNull();
+  });
+
+  it('calculates cost correctly when thoughts are included in outputTokens', () => {
+    // Simulate including thoughts tokens in outputTokens (as the UI does)
+    const promptTokens = 1_000_000;
+    const candidateTokens = 500_000;
+    const thoughtsTokens = 300_000;
+    const outputTokens = candidateTokens + thoughtsTokens;
+
+    const cost = calculateCost({
+      inputTokens: promptTokens,
+      outputTokens,
+      pricing: {
+        inputPerMillionTokens: 0.3,
+        outputPerMillionTokens: 1.2,
+      },
+    });
+
+    // 1M input tokens * $0.30/M = $0.30
+    // 800K output tokens * $1.20/M = $0.96
+    // Total = $1.26
+    expect(cost).toBeCloseTo(1.26, 6);
+  });
 });

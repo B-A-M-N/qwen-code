@@ -341,4 +341,224 @@ describe('<ModelStatsDisplay />', () => {
       expect(output).toContain('glm-5 (echoer)');
     });
   });
+
+  describe('Cost estimation', () => {
+    it('does not display cost section when modelPricing is not configured', () => {
+      const { lastFrame } = renderWithMockedStats(
+        {
+          models: {
+            'gemini-2.5-pro': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 100 },
+              tokens: {
+                prompt: 10_000,
+                candidates: 5_000,
+                total: 15_005,
+                cached: 0,
+                thoughts: 5,
+                tool: 0,
+              },
+            }),
+          },
+          tools: {
+            totalCalls: 0,
+            totalSuccess: 0,
+            totalFail: 0,
+            totalDurationMs: 0,
+            totalDecisions: { accept: 0, reject: 0, modify: 0 },
+            byName: {},
+          },
+          files: {
+            totalLinesAdded: 0,
+            totalLinesRemoved: 0,
+          },
+        },
+        undefined, // No pricing configured
+      );
+
+      const output = lastFrame();
+      expect(output).not.toContain('Cost');
+      expect(output).not.toContain('Estimated');
+    });
+
+    it('does not display cost section when modelPricing is empty', () => {
+      const { lastFrame } = renderWithMockedStats(
+        {
+          models: {
+            'gemini-2.5-pro': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 100 },
+              tokens: {
+                prompt: 10_000,
+                candidates: 5_000,
+                total: 15_005,
+                cached: 0,
+                thoughts: 5,
+                tool: 0,
+              },
+            }),
+          },
+          tools: {
+            totalCalls: 0,
+            totalSuccess: 0,
+            totalFail: 0,
+            totalDurationMs: 0,
+            totalDecisions: { accept: 0, reject: 0, modify: 0 },
+            byName: {},
+          },
+          files: {
+            totalLinesAdded: 0,
+            totalLinesRemoved: 0,
+          },
+        },
+        {}, // Empty pricing
+      );
+
+      const output = lastFrame();
+      expect(output).not.toContain('Cost');
+      expect(output).not.toContain('Estimated');
+    });
+
+    it('displays cost section when modelPricing is configured for the model', () => {
+      const { lastFrame } = renderWithMockedStats(
+        {
+          models: {
+            'gemini-2.5-pro': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 100 },
+              tokens: {
+                prompt: 1_000_000,
+                candidates: 500_000,
+                total: 1_500_000,
+                cached: 0,
+                thoughts: 300_000,
+                tool: 0,
+              },
+            }),
+          },
+          tools: {
+            totalCalls: 0,
+            totalSuccess: 0,
+            totalFail: 0,
+            totalDurationMs: 0,
+            totalDecisions: { accept: 0, reject: 0, modify: 0 },
+            byName: {},
+          },
+          files: {
+            totalLinesAdded: 0,
+            totalLinesRemoved: 0,
+          },
+        },
+        {
+          'gemini-2.5-pro': {
+            inputPerMillionTokens: 0.3,
+            outputPerMillionTokens: 1.2,
+          },
+        },
+      );
+
+      const output = lastFrame();
+      expect(output).toContain('Cost');
+      expect(output).toContain('Estimated');
+      // 1M input * $0.30/M = $0.30
+      // 800K output (500K candidates + 300K thoughts) * $1.20/M = $0.96
+      // Total = $1.26
+      expect(output).toContain('$1.2600');
+    });
+
+    it('includes thoughts tokens in cost calculation', () => {
+      const { lastFrame } = renderWithMockedStats(
+        {
+          models: {
+            'gemini-2.5-pro': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 100 },
+              tokens: {
+                prompt: 1_000_000,
+                candidates: 0,
+                total: 1_000_000,
+                cached: 0,
+                thoughts: 1_000_000,
+                tool: 0,
+              },
+            }),
+          },
+          tools: {
+            totalCalls: 0,
+            totalSuccess: 0,
+            totalFail: 0,
+            totalDurationMs: 0,
+            totalDecisions: { accept: 0, reject: 0, modify: 0 },
+            byName: {},
+          },
+          files: {
+            totalLinesAdded: 0,
+            totalLinesRemoved: 0,
+          },
+        },
+        {
+          'gemini-2.5-pro': {
+            inputPerMillionTokens: 0.3,
+            outputPerMillionTokens: 1.2,
+          },
+        },
+      );
+
+      const output = lastFrame();
+      // 1M input * $0.30/M = $0.30
+      // 1M thoughts (as output) * $1.20/M = $1.20
+      // Total = $1.50
+      expect(output).toContain('$1.5000');
+    });
+
+    it('shows N/A when pricing is not configured for a specific model', () => {
+      const { lastFrame } = renderWithMockedStats(
+        {
+          models: {
+            'gemini-2.5-pro': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 100 },
+              tokens: {
+                prompt: 1_000_000,
+                candidates: 1_000_000,
+                total: 2_000_000,
+                cached: 0,
+                thoughts: 0,
+                tool: 0,
+              },
+            }),
+            'gemini-2.5-flash': mainOnly({
+              api: { totalRequests: 1, totalErrors: 0, totalLatencyMs: 50 },
+              tokens: {
+                prompt: 2_000_000,
+                candidates: 2_000_000,
+                total: 4_000_000,
+                cached: 0,
+                thoughts: 0,
+                tool: 0,
+              },
+            }),
+          },
+          tools: {
+            totalCalls: 0,
+            totalSuccess: 0,
+            totalFail: 0,
+            totalDurationMs: 0,
+            totalDecisions: { accept: 0, reject: 0, modify: 0 },
+            byName: {},
+          },
+          files: {
+            totalLinesAdded: 0,
+            totalLinesRemoved: 0,
+          },
+        },
+        {
+          'gemini-2.5-pro': {
+            inputPerMillionTokens: 0.3,
+            outputPerMillionTokens: 1.2,
+          },
+          // gemini-2.5-flash has no pricing
+        },
+      );
+
+      const output = lastFrame();
+      expect(output).toContain('$1.5000'); // gemini-2.5-pro cost
+      expect(output).toContain('N/A'); // gemini-2.5-flash has no pricing
+    });
+  });
 });

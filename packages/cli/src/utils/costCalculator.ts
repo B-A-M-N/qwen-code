@@ -18,6 +18,8 @@ export function calculateCost(args: {
 
   if (!pricing) return null;
 
+  if (inputTokens < 0 || outputTokens < 0) return null;
+
   const inputCost =
     pricing.inputPerMillionTokens != null
       ? (inputTokens / 1_000_000) * pricing.inputPerMillionTokens
