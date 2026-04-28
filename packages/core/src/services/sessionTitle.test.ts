@@ -7,7 +7,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Content } from '@google/genai';
 import type { Config } from '../config/config.js';
-import { sanitizeTitle, tryGenerateSessionTitle } from './sessionTitle.js';
+import {
+  sanitizeTitle,
+  tryGenerateSessionTitle,
+  SESSION_TITLE_MAX_LENGTH,
+} from './sessionTitle.js';
 
 interface MockOptions {
   fastModel?: string | undefined;
@@ -299,5 +303,17 @@ describe('sanitizeTitle', () => {
     // High surrogate must not linger on its own.
     expect(sanitized).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
     expect(sanitized.length).toBeLessThanOrEqual(200);
+  });
+
+  it('preserves titles at the exact SESSION_TITLE_MAX_LENGTH limit', () => {
+    const exactTitle = 'b'.repeat(SESSION_TITLE_MAX_LENGTH);
+    const result = sanitizeTitle(exactTitle);
+    expect(result).toBe(exactTitle);
+  });
+
+  it('preserves titles at or under the limit', () => {
+    const exactTitle = 'b'.repeat(SESSION_TITLE_MAX_LENGTH);
+    const result = sanitizeTitle(exactTitle);
+    expect(result).toBe(exactTitle);
   });
 });
