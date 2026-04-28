@@ -14,6 +14,18 @@ import {
 } from '@qwen-code/qwen-code-core';
 import type { Settings } from '../config/settings.js';
 
+/**
+ * Env var names that hold model selections for each auth type.
+ * Mirrors the model-var mappings in core's AUTH_ENV_MAPPINGS.
+ */
+const AUTH_ENV_MODEL_VARS: Record<AuthType, string[]> = {
+  [AuthType.USE_OPENAI]: ['OPENAI_MODEL', 'QWEN_MODEL'],
+  [AuthType.USE_GEMINI]: ['GEMINI_MODEL'],
+  [AuthType.USE_VERTEX_AI]: ['GOOGLE_MODEL'],
+  [AuthType.USE_ANTHROPIC]: ['ANTHROPIC_MODEL'],
+  [AuthType.QWEN_OAUTH]: [],
+};
+
 export interface CliGenerationConfigInputs {
   argv: {
     model?: string | undefined;
@@ -96,15 +108,23 @@ export function resolveCliGenerationConfig(
   const authType = selectedAuthType;
 
   // Resolve the target model based on strict precedence:
-  // argv.model > settings.model.name > OPENAI_MODEL > QWEN_MODEL
+  // argv.model > settings.model.name > auth-specific env model vars
   // Env vars are ONLY considered when neither argv.model nor settings.model.name is set.
   let resolvedModel: string | undefined;
+  let sourceEnvVar: string | undefined;
   if (argv.model) {
     resolvedModel = argv.model;
   } else if (settings.model?.name) {
     resolvedModel = settings.model.name;
-  } else if (authType === AuthType.USE_OPENAI) {
-    resolvedModel = env['OPENAI_MODEL'] || env['QWEN_MODEL'];
+  } else if (authType && AUTH_ENV_MODEL_VARS[authType]) {
+    // Only check env vars for the current auth type
+    for (const envVar of AUTH_ENV_MODEL_VARS[authType]) {
+      if (env[envVar]) {
+        resolvedModel = env[envVar];
+        sourceEnvVar = envVar;
+        break;
+      }
+    }
   }
 
   // Find a matching provider for the resolved model (for metadata: generationConfig, envKey, etc.)
@@ -119,15 +139,22 @@ export function resolveCliGenerationConfig(
     }
   }
 
-  // Filter env to prevent OPENAI_MODEL/QWEN_MODEL from overriding higher-priority sources.
-  // Only pass these env vars when we actually resolved the model from them.
+  // Filter env to prevent auth-specific model env vars from overriding higher-priority sources.
+  // Build a list of ALL model env vars across all auth types.
+  const allModelEnvVars = Object.values(AUTH_ENV_MODEL_VARS).flat();
   const filteredEnv = { ...env };
-  if (
-    resolvedModel !== env['OPENAI_MODEL'] &&
-    resolvedModel !== env['QWEN_MODEL']
-  ) {
-    delete filteredEnv['OPENAI_MODEL'];
-    delete filteredEnv['QWEN_MODEL'];
+  if (sourceEnvVar) {
+    // Keep only the env var that was actually used
+    for (const envVar of allModelEnvVars) {
+      if (envVar !== sourceEnvVar) {
+        delete filteredEnv[envVar];
+      }
+    }
+  } else {
+    // Model was not resolved from env - strip ALL model env vars
+    for (const envVar of allModelEnvVars) {
+      delete filteredEnv[envVar];
+    }
   }
 
   const configSources: ModelConfigSourcesInput = {

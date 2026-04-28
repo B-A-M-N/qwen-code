@@ -134,6 +134,8 @@ describe('modelConfigUtils', () => {
     beforeEach(() => {
       vi.resetModules();
       process.env = { ...originalEnv };
+      delete process.env['OPENAI_MODEL'];
+      delete process.env['QWEN_MODEL'];
       mockWriteStderrLine.mockClear();
     });
 
@@ -1198,4 +1200,3 @@ describe('modelConfigUtils', () => {
     });
   });
 });
-// trigger rebuild
