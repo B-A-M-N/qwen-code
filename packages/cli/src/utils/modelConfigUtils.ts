@@ -92,12 +92,19 @@ export function getAuthTypeFromEnv(): AuthType | undefined {
 /**
  * Unified resolver for CLI generation config.
  *
- * Precedence (for OpenAI auth):
- * - model: argv.model > settings.model.name > OPENAI_MODEL > QWEN_MODEL
- * - apiKey: argv.openaiApiKey > OPENAI_API_KEY > settings.security.auth.apiKey
- * - baseUrl: argv.openaiBaseUrl > OPENAI_BASE_URL > settings.security.auth.baseUrl
+ * Model precedence (all auth types):
+ * - argv.model > settings.model.name > auth-specific env model vars
  *
- * For non-OpenAI auth, only argv.model override is respected at CLI layer.
+ * Env var mapping by auth type (mirrors core's AUTH_ENV_MAPPINGS):
+ * - USE_OPENAI: OPENAI_MODEL, QWEN_MODEL
+ * - USE_GEMINI: GEMINI_MODEL
+ * - USE_VERTEX_AI: GOOGLE_MODEL
+ * - USE_ANTHROPIC: ANTHROPIC_MODEL
+ *
+ * When model is resolved from argv or settings, all model env vars are stripped
+ * from the env passed to core's resolveModelConfig to prevent incorrect overrides.
+ * When model is resolved from an auth-specific env var, only that env var is
+ * kept in the filtered env so core can access the provider metadata.
  */
 export function resolveCliGenerationConfig(
   inputs: CliGenerationConfigInputs,
@@ -140,6 +147,9 @@ export function resolveCliGenerationConfig(
   }
 
   // Filter env to prevent auth-specific model env vars from overriding higher-priority sources.
+  // sourceEnvVar is only set when the model was actually resolved from an env var (lines 119-128),
+  // so this is source-based filtering, not value-based. If model came from argv or settings,
+  // sourceEnvVar is undefined and ALL model env vars are stripped.
   // Build a list of ALL model env vars across all auth types.
   const allModelEnvVars = Object.values(AUTH_ENV_MODEL_VARS).flat();
   const filteredEnv = { ...env };

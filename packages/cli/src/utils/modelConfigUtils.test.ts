@@ -567,7 +567,7 @@ describe('modelConfigUtils', () => {
       );
     });
 
-    it('should use process.env when env is not provided', () => {
+    it('should use process.env (filtered) when env is not provided', () => {
       const argv = {};
       const settings = makeMockSettings();
       const selectedAuthType = AuthType.USE_OPENAI;
@@ -588,9 +588,13 @@ describe('modelConfigUtils', () => {
         selectedAuthType,
       });
 
+      // process.env is filtered: model env vars stripped since model came from settings
       expect(vi.mocked(resolveModelConfig)).toHaveBeenCalledWith(
         expect.objectContaining({
-          env: process.env,
+          env: expect.not.objectContaining({
+            OPENAI_MODEL: expect.anything(),
+            QWEN_MODEL: expect.anything(),
+          }),
         }),
       );
     });
