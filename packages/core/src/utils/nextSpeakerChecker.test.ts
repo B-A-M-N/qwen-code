@@ -72,6 +72,7 @@ describe('checkNextSpeaker', () => {
     mockConfig = {
       getProjectRoot: vi.fn().mockReturnValue('/test/project/root'),
       getSessionId: vi.fn().mockReturnValue('test-session-id'),
+      getFastModel: vi.fn().mockReturnValue(undefined),
       getModel: () => 'test-model',
       getBaseLlmClient: vi.fn().mockReturnValue(mockBaseLlmClient),
       storage: {

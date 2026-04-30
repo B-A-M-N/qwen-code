@@ -32,7 +32,6 @@ import {
   type ChatCompressionInfo,
 } from './turn.js';
 import { getCoreSystemPrompt, getCustomSystemPrompt } from './prompts.js';
-import { DEFAULT_QWEN_FLASH_MODEL } from '../config/models.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import { promptIdContext } from '../utils/promptIdContext.js';
 import { setSimulate429 } from '../utils/testUtils.js';
@@ -333,6 +332,7 @@ describe('Gemini Client (client.ts)', () => {
         .mockReturnValue(contentGeneratorConfig),
       getToolRegistry: vi.fn().mockReturnValue(mockToolRegistry),
       getModel: vi.fn().mockReturnValue('test-model'),
+      getFastModel: vi.fn().mockReturnValue(undefined),
       getEmbeddingModel: vi.fn().mockReturnValue('test-embedding-model'),
       getApiKey: vi.fn().mockReturnValue('test-key'),
       getVertexAI: vi.fn().mockReturnValue(false),
@@ -1389,6 +1389,7 @@ hello
       const mockChat: Partial<GeminiChat> = {
         addHistory: vi.fn(),
         getHistory: vi.fn().mockReturnValue([]),
+        insertBeforeLastUserMessage: vi.fn(),
       };
       client['chat'] = mockChat as GeminiChat;
 
@@ -1411,12 +1412,15 @@ hello
       );
       expect(mockTurnRunFn).toHaveBeenCalledWith(
         'test-model',
-        expect.arrayContaining([
-          '## Relevant memory\n\nUser prefers terse responses.',
-          'Please answer tersely',
-        ]),
+        expect.arrayContaining(['Please answer tersely']),
         expect.any(AbortSignal),
       );
+      expect(mockChat.insertBeforeLastUserMessage).toHaveBeenCalledWith({
+        role: 'user',
+        parts: [
+          { text: '## Relevant memory\n\nUser prefers terse responses.' },
+        ],
+      });
     });
 
     it('should track surfaced managed memory paths across user queries', async () => {
@@ -1451,6 +1455,7 @@ hello
       const mockChat: Partial<GeminiChat> = {
         addHistory: vi.fn(),
         getHistory: vi.fn().mockReturnValue([]),
+        insertBeforeLastUserMessage: vi.fn(),
       };
       client['chat'] = mockChat as GeminiChat;
 
@@ -2727,12 +2732,12 @@ Other open files:
         contents,
         generationConfig,
         abortSignal,
-        DEFAULT_QWEN_FLASH_MODEL,
+        'test-model',
       );
 
       expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: DEFAULT_QWEN_FLASH_MODEL,
+          model: 'test-model',
           config: expect.objectContaining({
             abortSignal,
             systemInstruction: getCoreSystemPrompt(''),
@@ -2755,7 +2760,7 @@ Other open files:
         contents,
         {},
         new AbortController().signal,
-        DEFAULT_QWEN_FLASH_MODEL,
+        'test-model',
       );
 
       expect(mockContentGenerator.generateContent).not.toHaveBeenCalledWith({
@@ -2765,7 +2770,7 @@ Other open files:
       });
       expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
         {
-          model: DEFAULT_QWEN_FLASH_MODEL,
+          model: 'test-model',
           config: expect.any(Object),
           contents,
         },
@@ -2778,17 +2783,12 @@ Other open files:
       const abortSignal = new AbortController().signal;
 
       await promptIdContext.run('btw-prompt-id', async () => {
-        await client.generateContent(
-          contents,
-          {},
-          abortSignal,
-          DEFAULT_QWEN_FLASH_MODEL,
-        );
+        await client.generateContent(contents, {}, abortSignal, 'test-model');
       });
 
       expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: DEFAULT_QWEN_FLASH_MODEL,
+          model: 'test-model',
           contents,
         }),
         'btw-prompt-id',
@@ -2804,18 +2804,12 @@ Other open files:
           client.generateContent as unknown as (
             ...args: unknown[]
           ) => Promise<GenerateContentResponse>
-        )(
-          contents,
-          {},
-          abortSignal,
-          DEFAULT_QWEN_FLASH_MODEL,
-          'override-prompt-id',
-        );
+        )(contents, {}, abortSignal, 'test-model', 'override-prompt-id');
       });
 
       expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: DEFAULT_QWEN_FLASH_MODEL,
+          model: 'test-model',
           contents,
         }),
         'override-prompt-id',
@@ -2836,12 +2830,7 @@ Other open files:
         'Override prompt with memory',
       );
 
-      await client.generateContent(
-        contents,
-        {},
-        abortSignal,
-        DEFAULT_QWEN_FLASH_MODEL,
-      );
+      await client.generateContent(contents, {}, abortSignal, 'test-model');
 
       expect(getCustomSystemPrompt).toHaveBeenCalledWith(
         'Override prompt',
@@ -2867,12 +2856,7 @@ Other open files:
         'Be extra concise.',
       );
 
-      await client.generateContent(
-        contents,
-        {},
-        abortSignal,
-        DEFAULT_QWEN_FLASH_MODEL,
-      );
+      await client.generateContent(contents, {}, abortSignal, 'test-model');
 
       expect(getCoreSystemPrompt).toHaveBeenCalledWith(
         '',
@@ -2898,12 +2882,7 @@ Other open files:
         'Override prompt with memory and append',
       );
 
-      await client.generateContent(
-        contents,
-        {},
-        abortSignal,
-        DEFAULT_QWEN_FLASH_MODEL,
-      );
+      await client.generateContent(contents, {}, abortSignal, 'test-model');
 
       expect(getCustomSystemPrompt).toHaveBeenCalledWith(
         'Override prompt',
