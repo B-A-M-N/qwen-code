@@ -27,9 +27,11 @@ import {
 } from './permission-helpers.js';
 import type { ToolCallConfirmationDetails } from '../tools/tools.js';
 
+export type PermissionFlowPermission = 'allow' | 'deny' | 'ask' | 'default';
+
 export interface PermissionFlowResult {
-  /** The final permission after L3→L4 (allow | deny | ask) */
-  finalPermission: string;
+  /** The final permission after L3→L4 (allow | deny | ask | default) */
+  finalPermission: PermissionFlowPermission;
   /** Whether PM forced 'ask' (hides "Always Allow" buttons) */
   pmForcedAsk: boolean;
   /** Deny message (only set when finalPermission === 'deny') */
@@ -45,7 +47,11 @@ export interface PermissionFlowResult {
  * @param invocation - The tool invocation
  * @param toolName - Name of the tool being called
  * @param toolParams - Parameters passed to the tool
- * @returns The permission decision and related metadata
+ * @returns The permission decision and related metadata.
+ *   `finalPermission` can be 'allow', 'deny', 'ask', or 'default'.
+ *   The 'default' state is produced when the tool's default permission
+ *   returns something other than the standard values (e.g. an edge case
+ *   in the tool's getDefaultPermission implementation).
  */
 export async function evaluatePermissionFlow(
   config: Config,
@@ -71,7 +77,7 @@ export async function evaluatePermissionFlow(
 
   // Build result
   const result: PermissionFlowResult = {
-    finalPermission,
+    finalPermission: finalPermission as PermissionFlowPermission,
     pmForcedAsk,
     pmCtx,
   };
@@ -103,7 +109,7 @@ export async function evaluatePermissionFlow(
  * confirmationDetails.type - callers must handle those separately.
  */
 export function needsConfirmation(
-  finalPermission: string,
+  finalPermission: PermissionFlowPermission,
   approvalMode: ApprovalMode,
   toolName: string,
 ): boolean {
