@@ -139,12 +139,14 @@ describe('tryGenerateSessionTitle', () => {
         required: string[];
         properties: { title: { type: string } };
       };
+      config: { thinkingConfig?: { includeThoughts: boolean } };
       maxAttempts: number;
     };
     expect(callOpts.model).toBe('qwen-turbo');
     expect(callOpts.schema.type).toBe('object');
     expect(callOpts.schema.required).toEqual(['title']);
     expect(callOpts.schema.properties.title.type).toBe('string');
+    expect(callOpts.config.thinkingConfig).toEqual({ includeThoughts: false });
     expect(callOpts.maxAttempts).toBe(1);
   });
 

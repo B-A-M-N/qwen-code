@@ -260,6 +260,7 @@ describe('generateToolUseSummary', () => {
       TOOL_USE_SUMMARY_SYSTEM_PROMPT,
     );
     expect(generationConfig.tools).toEqual([]);
+    expect(generationConfig.thinkingConfig).toEqual({ includeThoughts: false });
 
     const userText = contents[0].parts[0].text as string;
     expect(userText).toContain('Tool: Grep');

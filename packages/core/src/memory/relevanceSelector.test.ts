@@ -38,7 +38,10 @@ const docs: ScannedAutoMemoryDocument[] = [
 ];
 
 describe('selectRelevantAutoMemoryDocumentsByModel', () => {
-  const mockConfig = {} as Config;
+  const mockConfig = {
+    getFastModel: vi.fn(() => 'qwen-fast'),
+    getModel: vi.fn(() => 'qwen-main'),
+  } as unknown as Config;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,7 +64,11 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
       mockConfig,
       expect.objectContaining({
         purpose: 'auto-memory-recall',
-        config: { temperature: 0 },
+        model: 'qwen-fast',
+        config: {
+          temperature: 0,
+          thinkingConfig: { includeThoughts: false },
+        },
       }),
     );
   });

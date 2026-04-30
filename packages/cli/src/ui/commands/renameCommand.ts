@@ -80,6 +80,7 @@ async function generateKebabTitle(
               },
             ],
           },
+          thinkingConfig: { includeThoughts: false },
           abortSignal: signal,
         },
       },

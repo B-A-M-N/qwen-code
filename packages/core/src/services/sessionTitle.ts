@@ -147,6 +147,7 @@ export async function tryGenerateSessionTitle(
       config: {
         temperature: 0.2,
         maxOutputTokens: 100,
+        thinkingConfig: { includeThoughts: false },
       },
       abortSignal,
       promptId: 'session_title',

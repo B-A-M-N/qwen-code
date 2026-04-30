@@ -22,6 +22,7 @@ describe('runSideQuery', () => {
     mockConfig = {
       getBaseLlmClient: vi.fn().mockReturnValue(mockBaseLlmClient),
       getModel: vi.fn().mockReturnValue('qwen3-coder-plus'),
+      getFastModel: vi.fn().mockReturnValue(undefined),
     } as unknown as Config;
   });
 
@@ -49,6 +50,32 @@ describe('runSideQuery', () => {
         model: 'qwen3-coder-plus',
         promptId: 'side-query:next-speaker',
         abortSignal: abortController.signal,
+      }),
+    );
+  });
+
+  it('should prefer fast model when no model is explicitly provided', async () => {
+    vi.mocked(mockConfig.getFastModel).mockReturnValue('qwen-fast');
+    vi.mocked(mockBaseLlmClient.generateJson).mockResolvedValue({
+      decision: 'user',
+    });
+
+    await runSideQuery<{ decision: string }>(mockConfig, {
+      purpose: 'next-speaker',
+      contents: [{ role: 'user', parts: [{ text: 'Who speaks next?' }] }],
+      schema: {
+        type: 'object',
+        properties: {
+          decision: { type: 'string' },
+        },
+        required: ['decision'],
+      },
+      abortSignal: abortController.signal,
+    });
+
+    expect(mockBaseLlmClient.generateJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'qwen-fast',
       }),
     );
   });

@@ -72,6 +72,7 @@ export async function generateSessionRecap(
         tools: [],
         maxOutputTokens: 300,
         temperature: 0.3,
+        thinkingConfig: { includeThoughts: false },
       },
       abortSignal,
       model,

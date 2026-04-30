@@ -91,9 +91,11 @@ export async function selectRelevantAutoMemoryDocumentsByModel(
     contents,
     schema: RESPONSE_SCHEMA,
     abortSignal: AbortSignal.timeout(5_000),
+    model: config.getFastModel() ?? config.getModel(),
     systemInstruction: SELECT_MEMORIES_SYSTEM_PROMPT,
     config: {
       temperature: 0,
+      thinkingConfig: { includeThoughts: false },
     },
     validate: (value) => {
       if (!Array.isArray(value.selected_memories)) {

@@ -40,7 +40,11 @@ export async function runSideQuery<TResponse>(
     contents: options.contents,
     schema: options.schema,
     abortSignal: options.abortSignal,
-    model: options.model ?? config.getModel() ?? DEFAULT_QWEN_MODEL,
+    model:
+      options.model ??
+      config.getFastModel() ??
+      config.getModel() ??
+      DEFAULT_QWEN_MODEL,
     systemInstruction: options.systemInstruction,
     promptId: options.promptId ?? buildDefaultPromptId(options.purpose),
     config: options.config,

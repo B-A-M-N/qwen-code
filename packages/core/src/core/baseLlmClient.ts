@@ -15,6 +15,8 @@ import type {
 } from '@google/genai';
 import type { Config } from '../config/config.js';
 import type { ContentGenerator } from './contentGenerator.js';
+import { createContentGenerator } from './contentGenerator.js';
+import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 import { reportError } from '../utils/errorReporting.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { retryWithBackoff, isUnattendedMode } from '../utils/retry.js';
@@ -64,10 +66,40 @@ export interface GenerateJsonOptions {
  * A client dedicated to stateless, utility-focused LLM calls.
  */
 export class BaseLlmClient {
+  private readonly contentGeneratorsByModel = new Map<
+    string,
+    ContentGenerator
+  >();
+
   constructor(
     private readonly contentGenerator: ContentGenerator,
     private readonly config: Config,
   ) {}
+
+  private async getContentGeneratorForModel(
+    model: string,
+  ): Promise<ContentGenerator> {
+    if (model === this.config.getModel()) {
+      return this.contentGenerator;
+    }
+
+    const cached = this.contentGeneratorsByModel.get(model);
+    if (cached) {
+      return cached;
+    }
+
+    const generatorConfig = buildAgentContentGeneratorConfig(
+      this.config,
+      model,
+      { authType: this.config.getContentGeneratorConfig().authType! },
+    );
+    const generator = await createContentGenerator(
+      generatorConfig,
+      this.config,
+    );
+    this.contentGeneratorsByModel.set(model, generator);
+    return generator;
+  }
 
   async generateJson(
     options: GenerateJsonOptions,
@@ -102,8 +134,9 @@ export class BaseLlmClient {
     ];
 
     try {
+      const generator = await this.getContentGeneratorForModel(model);
       const apiCall = () =>
-        this.contentGenerator.generateContent(
+        generator.generateContent(
           {
             model,
             config: {

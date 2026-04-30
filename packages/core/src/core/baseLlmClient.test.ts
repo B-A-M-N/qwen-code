@@ -55,6 +55,7 @@ const mockConfig = {
   getContentGeneratorConfig: vi
     .fn()
     .mockReturnValue({ authType: AuthType.USE_GEMINI }),
+  getModel: vi.fn().mockReturnValue('test-model'),
   getEmbeddingModel: vi.fn().mockReturnValue('test-embedding-model'),
 } as unknown as Mocked<Config>;
 

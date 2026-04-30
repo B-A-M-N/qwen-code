@@ -221,6 +221,9 @@ describe('renameCommand', () => {
 
       expect(generateContent).toHaveBeenCalledOnce();
       expect(generateContent.mock.calls[0][0].model).toBe('qwen-turbo');
+      expect(generateContent.mock.calls[0][0].config.thinkingConfig).toEqual({
+        includeThoughts: false,
+      });
     });
 
     it('falls back to main model when fastModel is unset', async () => {

@@ -22,7 +22,9 @@ const debugLogger = createDebugLogger('CLIENT');
 
 // Core modules
 import type { ContentGenerator } from './contentGenerator.js';
+import { createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
+import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 import {
   getArenaSystemReminder,
   getCoreSystemPrompt,
@@ -129,6 +131,10 @@ export class GeminiClient {
   private chat?: GeminiChat;
   private sessionTurnCount = 0;
   private readonly surfacedRelevantAutoMemoryPaths = new Set<string>();
+  private readonly contentGeneratorsByModel = new Map<
+    string,
+    ContentGenerator
+  >();
 
   private readonly loopDetector: LoopDetectionService;
   private lastPromptId: string | undefined = undefined;
@@ -183,6 +189,31 @@ export class GeminiClient {
       throw new Error('Content generator not initialized');
     }
     return this.config.getContentGenerator();
+  }
+
+  private async getContentGeneratorForModel(
+    model: string,
+  ): Promise<ContentGenerator> {
+    if (model === this.config.getModel()) {
+      return this.getContentGeneratorOrFail();
+    }
+
+    const cached = this.contentGeneratorsByModel.get(model);
+    if (cached) {
+      return cached;
+    }
+
+    const generatorConfig = buildAgentContentGeneratorConfig(
+      this.config,
+      model,
+      { authType: this.config.getContentGeneratorConfig().authType! },
+    );
+    const generator = await createContentGenerator(
+      generatorConfig,
+      this.config,
+    );
+    this.contentGeneratorsByModel.set(model, generator);
+    return generator;
   }
 
   async addHistory(content: Content) {
@@ -798,17 +829,6 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       const systemReminders = [];
-      const relevantAutoMemory = relevantAutoMemoryPromise
-        ? await relevantAutoMemoryPromise
-        : EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
-      const relevantAutoMemoryPrompt = relevantAutoMemory.prompt;
-
-      if (relevantAutoMemoryPrompt) {
-        systemReminders.push(relevantAutoMemoryPrompt);
-        for (const doc of relevantAutoMemory.selectedDocs) {
-          this.surfacedRelevantAutoMemoryPaths.add(doc.filePath);
-        }
-      }
 
       // add subagent system reminder if there are subagents
       const hasAgentTool = await this.config
@@ -845,6 +865,21 @@ export class GeminiClient {
     }
 
     const resultStream = turn.run(model, requestToSent, signal);
+    const resolvedRelevantAutoMemory = await Promise.race([
+      relevantAutoMemoryPromise ??
+        Promise.resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT),
+      Promise.resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT),
+    ]);
+    if (resolvedRelevantAutoMemory.prompt) {
+      this.getChat().insertBeforeLastUserMessage({
+        role: 'user',
+        parts: [{ text: resolvedRelevantAutoMemory.prompt }],
+      });
+      for (const doc of resolvedRelevantAutoMemory.selectedDocs) {
+        this.surfacedRelevantAutoMemoryPaths.add(doc.filePath);
+      }
+    }
+
     for await (const event of resultStream) {
       if (!this.config.getSkipLoopDetection()) {
         if (this.loopDetector.addAndCheck(event)) {
@@ -1088,10 +1123,11 @@ export class GeminiClient {
         systemInstruction: finalSystemInstruction,
       };
 
+      const generator = await this.getContentGeneratorForModel(model);
       const apiCall = () => {
         currentAttemptModel = model;
 
-        return this.getContentGeneratorOrFail().generateContent(
+        return generator.generateContent(
           {
             model,
             config: requestConfig,

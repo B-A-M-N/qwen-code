@@ -150,6 +150,7 @@ export async function generateToolUseSummary(
         tools: [],
         maxOutputTokens: 60,
         temperature: 0.3,
+        thinkingConfig: { includeThoughts: false },
       },
       signal,
       model,
