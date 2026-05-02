@@ -148,4 +148,103 @@ export const modelCommand: SlashCommand = {
       dialog: 'model',
     };
   },
+  subCommands: [
+    {
+      name: 'list',
+      description: 'List available models from the configured API endpoint',
+      kind: CommandKind.BUILT_IN,
+      supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
+      action: async (context: CommandContext): Promise<MessageActionReturn> => {
+        const { services } = context;
+        const { config } = services;
+
+        if (!config) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: 'Configuration not available.',
+          };
+        }
+
+        const contentGeneratorConfig = config.getContentGeneratorConfig();
+        if (!contentGeneratorConfig) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: 'Content generator configuration not available.',
+          };
+        }
+
+        const { baseUrl, apiKey } = contentGeneratorConfig;
+
+        if (!baseUrl) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content:
+              'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+          };
+        }
+
+        try {
+          const models = await fetchModels(baseUrl, apiKey);
+          const output = models.join('\n');
+
+          return {
+            type: 'message',
+            messageType: 'info',
+            content: output,
+          };
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: `Failed to fetch models: ${errorMessage}`,
+          };
+        }
+      },
+    },
+  ],
 };
+
+/**
+ * Fetch available models from the OpenAI-compatible /models endpoint.
+ * Returns an array of model ID strings.
+ */
+async function fetchModels(
+  baseUrl: string,
+  apiKey?: string,
+): Promise<string[]> {
+  // Normalize baseUrl to avoid double slash (e.g., "https://api.openai.com/v1/")
+  const normalizedUrl = baseUrl.replace(/\/+$/, '');
+  const url = `${normalizedUrl}/models`;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(url, { method: 'GET', headers });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Request failed (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as {
+    data?: Array<{ id?: unknown; [key: string]: unknown }>;
+  };
+
+  if (!Array.isArray(data.data)) {
+    throw new Error('Unexpected response format: missing data array');
+  }
+
+  // Type-check model IDs: only accept non-empty strings
+  return data.data
+    .map((model) => model.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+}
