@@ -397,14 +397,15 @@ const RETRYABLE_NETWORK_CODES = new Set([
 /**
  * Determine if a 409 Conflict error is likely transient.
  * Some providers use 409 for lock contention that may resolve.
+ * Only checks message content — does NOT fall back to status code matching
+ * (the caller already knows status === 409 to invoke this function).
  */
 function isTransientConflict(error: Error | unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   return (
     message.includes('lock') ||
     message.includes('conflict') ||
-    message.includes('contention') ||
-    message.includes('409')
+    message.includes('contention')
   );
 }
 
