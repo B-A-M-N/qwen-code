@@ -10,6 +10,13 @@ import { type CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import { MessageType } from '../types.js';
 import { formatDuration } from '../utils/formatters.js';
+import { MAIN_SOURCE } from '@qwen-code/qwen-code-core';
+import type { ModelMetricsCore, ModelMetrics } from '@qwen-code/qwen-code-core';
+
+const toModelMetrics = (core: ModelMetricsCore): ModelMetrics => ({
+  ...core,
+  bySource: { [MAIN_SOURCE]: core },
+});
 
 describe('statsCommand', () => {
   let mockContext: CommandContext;
@@ -176,7 +183,7 @@ describe('statsCommand', () => {
       };
       // Set up model metrics
       contextWithPricing.session.stats.metrics.models = {
-        'test-model': {
+        'test-model': toModelMetrics({
           tokens: {
             prompt: 1_000_000,
             candidates: 500_000,
@@ -190,7 +197,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(contextWithPricing, '')) as {
@@ -215,7 +222,7 @@ describe('statsCommand', () => {
       });
       // Set up model metrics without pricing
       contextWithoutPricing.session.stats.metrics.models = {
-        'test-model': {
+        'test-model': toModelMetrics({
           tokens: {
             prompt: 1_000_000,
             candidates: 500_000,
@@ -229,7 +236,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(
@@ -268,7 +275,7 @@ describe('statsCommand', () => {
       };
       // Set up multiple model metrics
       context.session.stats.metrics.models = {
-        'model-a': {
+        'model-a': toModelMetrics({
           tokens: {
             prompt: 2_000_000,
             candidates: 1_000_000,
@@ -282,8 +289,8 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
-        'model-b': {
+        }),
+        'model-b': toModelMetrics({
           tokens: {
             prompt: 500_000,
             candidates: 200_000,
@@ -297,7 +304,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(context, '')) as {
@@ -336,7 +343,7 @@ describe('statsCommand', () => {
         },
       };
       context.session.stats.metrics.models = {
-        'model-a': {
+        'model-a': toModelMetrics({
           tokens: {
             prompt: 1_000_000,
             candidates: 1_000_000,
@@ -350,8 +357,8 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
-        'model-b': {
+        }),
+        'model-b': toModelMetrics({
           tokens: {
             prompt: 1_000_000,
             candidates: 1_000_000,
@@ -365,7 +372,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(context, '')) as {
@@ -404,7 +411,7 @@ describe('statsCommand', () => {
         },
       };
       context.session.stats.metrics.models = {
-        'test-model': {
+        'test-model': toModelMetrics({
           tokens: {
             prompt: 0,
             candidates: 0,
@@ -418,7 +425,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(context, '')) as {
@@ -452,7 +459,7 @@ describe('statsCommand', () => {
         },
       };
       context.session.stats.metrics.models = {
-        'test-model': {
+        'test-model': toModelMetrics({
           tokens: {
             prompt: 1_000_000,
             candidates: 1_000_000,
@@ -466,7 +473,7 @@ describe('statsCommand', () => {
             totalErrors: 0,
             totalLatencyMs: 0,
           },
-        },
+        }),
       };
 
       const result = (await modelSubCommand.action(context, '')) as {

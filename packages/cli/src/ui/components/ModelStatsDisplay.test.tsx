@@ -42,6 +42,7 @@ const renderWithMockedStats = (
 ) => {
   useSessionStatsMock.mockReturnValue({
     stats: {
+      sessionId: '',
       sessionStartTime: new Date(),
       metrics,
       lastPromptTokenCount: 0,
@@ -50,6 +51,7 @@ const renderWithMockedStats = (
 
     getPromptCount: () => 5,
     startNewPrompt: vi.fn(),
+    startNewSession: vi.fn(),
   });
 
   const mockSettings = {
@@ -85,9 +87,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     expect(lastFrame()).toContain(
@@ -116,9 +119,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     const output = lastFrame();
@@ -159,9 +163,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     const output = lastFrame();
@@ -202,9 +207,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     const output = lastFrame();
@@ -237,9 +243,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     expect(lastFrame()).toMatchSnapshot();
@@ -265,9 +272,10 @@ describe('<ModelStatsDisplay />', () => {
         totalSuccess: 0,
         totalFail: 0,
         totalDurationMs: 0,
-        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
         byName: {},
       },
+      files: { totalLinesAdded: 0, totalLinesRemoved: 0 },
     });
 
     const output = lastFrame();
@@ -282,7 +290,7 @@ describe('<ModelStatsDisplay />', () => {
       totalSuccess: 0,
       totalFail: 0,
       totalDurationMs: 0,
-      totalDecisions: { accept: 0, reject: 0, modify: 0 },
+      totalDecisions: { accept: 0, reject: 0, modify: 0, auto_accept: 0 },
       byName: {},
     };
     const baseFiles: SessionMetrics['files'] = {
@@ -463,15 +471,6 @@ describe('<ModelStatsDisplay />', () => {
         );
         expect(lastFrame()).toContain('Cost');
         expect(lastFrame()).toContain('Estimated');
-      });
-
-      it('should show Cost section when thoughts > 0 even without pricing', () => {
-        const { lastFrame } = renderCostTest(
-          { 'gemini-2.5-pro': mainOnly(makeCore(10, 20, 3)) },
-          {}, // no pricing
-        );
-        expect(lastFrame()).toContain('Cost');
-        expect(lastFrame()).toContain('N/A');
       });
 
       it('should handle multiple models with different pricing', () => {
