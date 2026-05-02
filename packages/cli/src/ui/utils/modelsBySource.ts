@@ -105,7 +105,7 @@ export function flattenModelsBySource(
  * way; keep the behavior but apply it to the model portion only so subagent
  * names that happen to contain `-001` are not mangled.
  */
-function normalizeModelName(modelName: string): string {
+export function normalizeModelName(modelName: string): string {
   return modelName.replace('-001', '');
 }
 

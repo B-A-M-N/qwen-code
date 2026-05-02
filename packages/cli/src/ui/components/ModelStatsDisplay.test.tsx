@@ -432,10 +432,10 @@ describe('<ModelStatsDisplay />', () => {
         // Use larger numbers to make the difference visible
       });
 
-      it('should include thoughts tokens — larger numbers to expose difference', () => {
+      it('should calculate cost based on candidates only (no double-counting)', () => {
         // 1000 prompt, 2000 candidates, 500 thoughts
-        // With thoughts: (1000*1 + 2500*2)/1M = 0.001 + 0.005 = 0.006
-        // Without thoughts: (1000*1 + 2000*2)/1M = 0.001 + 0.004 = 0.005
+        // Cost uses candidates only: (1000*1 + 2000*2)/1M = 0.001 + 0.004 = 0.005
+        // (For OpenAI-compatible providers, candidates already includes thoughts.)
         const { lastFrame } = renderCostTest(
           { 'gemini-2.5-pro': mainOnly(makeCore(1000, 2000, 500)) },
           {
@@ -446,7 +446,7 @@ describe('<ModelStatsDisplay />', () => {
           },
         );
         expect(lastFrame()).toContain('Cost');
-        expect(lastFrame()).toContain('0.0060');
+        expect(lastFrame()).toContain('0.0050');
       });
 
       it('should use raw model name for pricing with subagent attribution', () => {

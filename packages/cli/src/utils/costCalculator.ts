@@ -29,5 +29,6 @@ export function calculateCost(args: {
       : 0;
 
   const total = inputCost + outputCost;
+  if (!isFinite(total)) return null;
   return total > 0 ? total : null;
 }

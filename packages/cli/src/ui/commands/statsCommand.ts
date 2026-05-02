@@ -95,13 +95,13 @@ export const statsCommand: SlashCommand = {
           for (const [modelName, modelMetrics] of Object.entries(
             metrics.models,
           )) {
+            const hasThoughts = modelMetrics.tokens.thoughts > 0;
             lines.push(
-              `${modelName}: prompt=${modelMetrics.tokens.prompt}, output=${modelMetrics.tokens.candidates}, cached=${modelMetrics.tokens.cached}`,
+              `${modelName}: prompt=${modelMetrics.tokens.prompt}, output=${modelMetrics.tokens.candidates}${hasThoughts ? `, thoughts=${modelMetrics.tokens.thoughts}` : ''}, cached=${modelMetrics.tokens.cached}`,
             );
             const cost = calculateCost({
               inputTokens: modelMetrics.tokens.prompt,
-              outputTokens:
-                modelMetrics.tokens.candidates + modelMetrics.tokens.thoughts,
+              outputTokens: modelMetrics.tokens.candidates,
               pricing: pricing?.[modelName],
             });
             if (cost != null) {

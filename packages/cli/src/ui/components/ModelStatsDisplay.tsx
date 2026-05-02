@@ -15,10 +15,16 @@ import {
 } from '../utils/computeStats.js';
 import type { ModelMetricsCore } from '../contexts/SessionContext.js';
 import { useSessionStats } from '../contexts/SessionContext.js';
-import { flattenModelsBySource } from '../utils/modelsBySource.js';
+import {
+  flattenModelsBySource,
+  normalizeModelName,
+} from '../utils/modelsBySource.js';
 import { t } from '../../i18n/index.js';
 import { useSettings } from '../contexts/SettingsContext.js';
-import { calculateCost } from '../../utils/costCalculator.js';
+import {
+  type ModelPricing,
+  calculateCost,
+} from '../../utils/costCalculator.js';
 
 const METRIC_COL_WIDTH = 28;
 // 28 + 2*24 = 76, fitting the 76-column panel at 80-column terminal width
@@ -98,12 +104,24 @@ export const ModelStatsDisplay: React.FC<ModelStatsDisplayProps> = ({
 
   const getModelName = (key: string): string => key.split('::')[0];
 
+  const getPricingForModel = (key: string): ModelPricing | undefined => {
+    const rawName = getModelName(key);
+    const pricing = modelPricing?.[rawName];
+    if (pricing != null) return pricing;
+    // Try normalized name as fallback (display strips -001 suffix)
+    const normalizedName = normalizeModelName(rawName);
+    if (normalizedName !== rawName) {
+      return modelPricing?.[normalizedName];
+    }
+    return undefined;
+  };
+
   const hasPricing = entries.some(
     ({ key, metrics }) =>
       calculateCost({
         inputTokens: metrics.tokens.prompt,
-        outputTokens: metrics.tokens.candidates + metrics.tokens.thoughts,
-        pricing: modelPricing?.[getModelName(key)],
+        outputTokens: metrics.tokens.candidates,
+        pricing: getPricingForModel(key),
       }) != null,
   );
 
@@ -235,9 +253,8 @@ export const ModelStatsDisplay: React.FC<ModelStatsDisplayProps> = ({
             values={entries.map(({ key, metrics }) => {
               const cost = calculateCost({
                 inputTokens: metrics.tokens.prompt,
-                outputTokens:
-                  metrics.tokens.candidates + metrics.tokens.thoughts,
-                pricing: modelPricing?.[getModelName(key)],
+                outputTokens: metrics.tokens.candidates,
+                pricing: getPricingForModel(key),
               });
               return cost != null ? `$${cost.toFixed(4)}` : 'N/A';
             })}
