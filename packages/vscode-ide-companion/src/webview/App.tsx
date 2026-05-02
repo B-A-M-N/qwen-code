@@ -176,7 +176,7 @@ const MessageList = React.memo<MessageListProps>(
       }
       // No wrapper div — message components render directly as children
       // of the scroll container, preserving the original CSS layout.
-      if (child === null) {
+      if (child == null) {
         return null;
       }
       mapping.push(index);
