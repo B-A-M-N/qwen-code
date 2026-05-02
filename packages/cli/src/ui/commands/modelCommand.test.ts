@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { modelCommand } from './modelCommand.js';
+import { modelCommand, fetchModels } from './modelCommand.js';
 import { type CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import {
@@ -189,6 +189,374 @@ describe('modelCommand', () => {
         type: 'message',
         messageType: 'info',
         content: expect.stringContaining('qwen-turbo'),
+      });
+    });
+  });
+
+  describe('fetchModels', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should parse standard OpenAI response with data array', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'qwen-plus' }, { id: 'qwen-max' }],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.openai.com/v1', 'key');
+      expect(result).toEqual(['qwen-plus', 'qwen-max']);
+    });
+
+    it('should parse response with object field (DeepSeek style)', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          object: 'list',
+          data: [
+            { id: 'deepseek-chat', owned_by: 'deepseek' },
+            { id: 'deepseek-coder', owned_by: 'deepseek' },
+          ],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.deepseek.com', 'key');
+      expect(result).toEqual(['deepseek-chat', 'deepseek-coder']);
+    });
+
+    it('should parse bare array response (some providers)', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue([{ id: 'model-1' }, { id: 'model-2' }]),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual(['model-1', 'model-2']);
+    });
+
+    it('should ignore extra fields (owned_by, created, permission)', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'model-1',
+              owned_by: 'org',
+              created: 1234567890,
+              permission: [],
+            },
+            { id: 'model-2', owned_by: 'org', created: 1234567891 },
+          ],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual(['model-1', 'model-2']);
+    });
+
+    it('should skip entries with missing id field', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }, { owned_by: 'org' }, { id: 'model-2' }],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual(['model-1', 'model-2']);
+    });
+
+    it('should skip entries with empty id', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }, { id: '' }, { id: 'model-2' }],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual(['model-1', 'model-2']);
+    });
+
+    it('should skip entries with whitespace-only id', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }, { id: '   ' }, { id: 'model-2' }],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual(['model-1', 'model-2']);
+    });
+
+    it('should throw on non-ok HTTP response', async () => {
+      const mockResponse = {
+        ok: false,
+        status: 401,
+        text: vi.fn().mockResolvedValue('Unauthorized'),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await expect(
+        fetchModels('https://api.example.com/v1', 'key'),
+      ).rejects.toThrow('Request failed (401): Unauthorized');
+    });
+
+    it('should throw on missing data array in object response', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          object: 'list',
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await expect(
+        fetchModels('https://api.example.com/v1', 'key'),
+      ).rejects.toThrow('Unexpected response format: missing data array');
+    });
+
+    it('should throw on non-object, non-array response', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue('just a string'),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await expect(
+        fetchModels('https://api.example.com/v1', 'key'),
+      ).rejects.toThrow(
+        'Unexpected response format: response is not an object or array',
+      );
+    });
+
+    it('should normalize baseUrl with trailing slash', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels('https://api.example.com/v1/', 'key');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.any(Object),
+      );
+    });
+
+    it('should return empty array when data array is empty', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      const result = await fetchModels('https://api.example.com/v1', 'key');
+      expect(result).toEqual([]);
+    });
+
+    it('should include Authorization header when apiKey is provided', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels('https://api.example.com/v1', 'my-key');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer my-key',
+          }),
+        }),
+      );
+    });
+
+    it('should not include Authorization header when apiKey is not provided', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels('https://api.example.com/v1');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({
+          headers: expect.not.objectContaining({
+            Authorization: expect.anything(),
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('list subcommand', () => {
+    let mockContext: CommandContext;
+
+    function getListAction() {
+      const cmd = modelCommand.subCommands?.find((c) => c.name === 'list');
+      if (!cmd) throw new Error('list subcommand not found');
+      return cmd.action!;
+    }
+
+    beforeEach(() => {
+      mockContext = createMockCommandContext();
+      vi.restoreAllMocks();
+    });
+
+    it('should return error when config is missing', async () => {
+      mockContext.services.config = null;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: 'Configuration not available.',
+      });
+    });
+
+    it('should return error when contentGeneratorConfig is missing', async () => {
+      const mockConfig = createMockConfig(null);
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: 'Content generator configuration not available.',
+      });
+    });
+
+    it('should return error when baseUrl is not configured', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: 'USE_OPENAI' as AuthType,
+        baseUrl: undefined,
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content:
+          'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+      });
+    });
+
+    it('should return model list on success', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: 'USE_OPENAI' as AuthType,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }, { id: 'model-2' }],
+        }),
+      } as unknown as Response);
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'info',
+        content: 'model-1\nmodel-2',
+      });
+    });
+
+    it('should handle Error instance throw from fetchModels', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: 'USE_OPENAI' as AuthType,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      vi.spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('Failed to fetch models:'),
+      });
+    });
+
+    it('should handle non-Error throw from fetchModels', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: 'USE_OPENAI' as AuthType,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      vi.spyOn(global, 'fetch').mockRejectedValue('string error');
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('Failed to fetch models:'),
       });
     });
   });

@@ -151,10 +151,15 @@ export const modelCommand: SlashCommand = {
   subCommands: [
     {
       name: 'list',
-      description: 'List available models from the configured API endpoint',
+      get description() {
+        return t('List available models from the configured API endpoint');
+      },
       kind: CommandKind.BUILT_IN,
       supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
-      action: async (context: CommandContext): Promise<MessageActionReturn> => {
+      action: async (
+        context: CommandContext,
+        _args: string,
+      ): Promise<MessageActionReturn> => {
         const { services } = context;
         const { config } = services;
 
@@ -162,7 +167,7 @@ export const modelCommand: SlashCommand = {
           return {
             type: 'message',
             messageType: 'error',
-            content: 'Configuration not available.',
+            content: t('Configuration not available.'),
           };
         }
 
@@ -171,7 +176,7 @@ export const modelCommand: SlashCommand = {
           return {
             type: 'message',
             messageType: 'error',
-            content: 'Content generator configuration not available.',
+            content: t('Content generator configuration not available.'),
           };
         }
 
@@ -181,13 +186,18 @@ export const modelCommand: SlashCommand = {
           return {
             type: 'message',
             messageType: 'error',
-            content:
+            content: t(
               'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+            ),
           };
         }
 
         try {
-          const models = await fetchModels(baseUrl, apiKey);
+          const models = await fetchModels(
+            baseUrl,
+            apiKey,
+            context.abortSignal,
+          );
           const output = models.join('\n');
 
           return {
@@ -201,7 +211,7 @@ export const modelCommand: SlashCommand = {
           return {
             type: 'message',
             messageType: 'error',
-            content: `Failed to fetch models: ${errorMessage}`,
+            content: `${t('Failed to fetch models:')} ${errorMessage}`,
           };
         }
       },
@@ -211,11 +221,19 @@ export const modelCommand: SlashCommand = {
 
 /**
  * Fetch available models from the OpenAI-compatible /models endpoint.
- * Returns an array of model ID strings.
+ * Handles multiple response shapes:
+ *   - Standard: { data: [{ id: "qwen-plus" }] }
+ *   - With object field: { object: "list", data: [{ id: "deepseek-chat", ... }] }
+ *   - Bare array: [{ id: "model" }] (some providers)
+ * Extra fields (owned_by, created, etc.) are ignored.
+ * Export for testing.
  */
-async function fetchModels(
+const FETCH_TIMEOUT_MS = 15_000;
+
+export async function fetchModels(
   baseUrl: string,
   apiKey?: string,
+  abortSignal?: AbortSignal,
 ): Promise<string[]> {
   // Normalize baseUrl to avoid double slash (e.g., "https://api.openai.com/v1/")
   const normalizedUrl = baseUrl.replace(/\/+$/, '');
@@ -228,23 +246,77 @@ async function fetchModels(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(url, { method: 'GET', headers });
+  // Set up timeout and optional user abort signal
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(
+    () => timeoutController.abort(),
+    FETCH_TIMEOUT_MS,
+  );
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Request failed (${response.status}): ${errorText}`);
+  const signal = abortSignal
+    ? AbortSignal.any([timeoutController.signal, abortSignal])
+    : timeoutController.signal;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorText: string;
+      try {
+        errorText = (await response.text()).slice(0, 500);
+      } catch {
+        errorText = '(unable to read error response)';
+      }
+      throw new Error(`Request failed (${response.status}): ${errorText}`);
+    }
+
+    const body = (await response.json()) as unknown;
+
+    // Extract the models array from various response shapes.
+    // 1. Standard OpenAI: { data: [{ id: "..." }] }
+    // 2. With object field: { object: "list", data: [{ id: "...", owned_by: "...", ... }] }
+    // 3. Bare array: [{ id: "..." }] (some providers skip the wrapper)
+    let modelArray: unknown[];
+
+    if (Array.isArray(body)) {
+      // Shape 3: bare array
+      modelArray = body;
+    } else if (body && typeof body === 'object') {
+      // Shapes 1 & 2: look for data property using bracket notation
+      const obj = body as Record<string, unknown>;
+      if (Array.isArray(obj['data'])) {
+        modelArray = obj['data'] as unknown[];
+      } else {
+        throw new Error('Unexpected response format: missing data array');
+      }
+    } else {
+      throw new Error(
+        'Unexpected response format: response is not an object or array',
+      );
+    }
+
+    // Extract model IDs.
+    // The only required field is `id` (string, non-empty).
+    // All other fields (owned_by, created, object, permission, etc.) are ignored.
+    const modelIds: string[] = [];
+
+    for (const item of modelArray) {
+      if (item && typeof item === 'object') {
+        const model = item as Record<string, unknown>;
+        const id = model['id'];
+        if (typeof id === 'string' && id.trim().length > 0) {
+          modelIds.push(id.trim());
+        }
+      }
+    }
+
+    return modelIds;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = (await response.json()) as {
-    data?: Array<{ id?: unknown; [key: string]: unknown }>;
-  };
-
-  if (!Array.isArray(data.data)) {
-    throw new Error('Unexpected response format: missing data array');
-  }
-
-  // Type-check model IDs: only accept non-empty strings
-  return data.data
-    .map((model) => model.id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0);
 }
