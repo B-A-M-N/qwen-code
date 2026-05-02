@@ -8,7 +8,12 @@ import type { GenerateContentResponse } from '@google/genai';
 import { AuthType } from '../core/contentGenerator.js';
 import { isQwenQuotaExceededError } from './quotaErrorDetection.js';
 import { createDebugLogger } from './debugLogger.js';
-import { getErrorStatus } from './errors.js';
+import {
+  getErrorStatus,
+  getErrorMessage,
+  getErrorType,
+  isNodeError,
+} from './errors.js';
 
 const debugLogger = createDebugLogger('RETRY');
 
@@ -58,9 +63,25 @@ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
  */
 function defaultShouldRetry(error: Error | unknown): boolean {
   const status = getErrorStatus(error);
-  return (
-    status === 429 || (status !== undefined && status >= 500 && status < 600)
-  );
+  if (
+    status === 429 ||
+    status === 408 ||
+    (status !== undefined && status >= 500 && status < 600)
+  ) {
+    return true;
+  }
+
+  // Check for 409 conflict — may be transient (lock contention)
+  if (status === 409) {
+    return isTransientConflict(error);
+  }
+
+  // Check for retryable network errors
+  if (isRetryableNetworkError(error)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -356,4 +377,146 @@ function logRetryAttempt(
   } else {
     debugLogger.warn(message, error);
   }
+}
+
+/**
+ * Network error codes that indicate a transient transport failure.
+ * These are retryable because they indicate temporary network issues,
+ * not deterministic request errors.
+ */
+const RETRYABLE_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'EAI_AGAIN',
+]);
+
+/**
+ * Determine if a 409 Conflict error is likely transient.
+ * Some providers use 409 for lock contention that may resolve.
+ */
+function isTransientConflict(error: Error | unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('lock') ||
+    message.includes('conflict') ||
+    message.includes('contention') ||
+    message.includes('409')
+  );
+}
+
+/**
+ * Check if an error is a retryable network transport failure.
+ * These are distinct from deterministic request errors (400, 401, 403, 404, 422).
+ */
+export function isRetryableNetworkError(error: Error | unknown): boolean {
+  // Check Node.js error codes (ECONNRESET, ETIMEDOUT, etc.)
+  if (isNodeError(error)) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code && RETRYABLE_NETWORK_CODES.has(nodeError.code)) {
+      return true;
+    }
+  }
+
+  // Check error message patterns for network/socket issues
+  const message = getErrorMessage(error).toLowerCase();
+  if (
+    message.includes('socket closed') ||
+    message.includes('stream ended') ||
+    message.includes('network error') ||
+    message.includes('connection reset') ||
+    message.includes('econnreset') ||
+    message.includes('etimedout')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Classification result for an error.
+ */
+export interface ErrorClassification {
+  retryable: boolean;
+  reason: string;
+  status?: number;
+}
+
+/**
+ * Classify an error as retryable or not.
+ * Returns an object with the classification and reason.
+ */
+export function classifyError(error: Error | unknown): ErrorClassification {
+  const status = getErrorStatus(error);
+
+  // Deterministic request errors — never retry
+  if (
+    status === 400 ||
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    status === 422
+  ) {
+    const statusText = status ? `HTTP ${status}` : 'unknown status';
+    return {
+      retryable: false,
+      reason: `Deterministic request error: ${statusText}`,
+      status,
+    };
+  }
+
+  // Retryable status codes
+  if (status === 429) {
+    return {
+      retryable: true,
+      reason: `Rate limited (HTTP 429)`,
+      status,
+    };
+  }
+
+  if (status === 408) {
+    return {
+      retryable: true,
+      reason: `Request timeout (HTTP 408)`,
+      status,
+    };
+  }
+
+  if (status === 409) {
+    const transient = isTransientConflict(error);
+    return {
+      retryable: transient,
+      reason: transient
+        ? 'Transient conflict/lock (HTTP 409)'
+        : 'Deterministic conflict (HTTP 409)',
+      status,
+    };
+  }
+
+  if (status !== undefined && status >= 500 && status < 600) {
+    return {
+      retryable: true,
+      reason: `Server error (HTTP ${status})`,
+      status,
+    };
+  }
+
+  // Network errors
+  if (isRetryableNetworkError(error)) {
+    const errorType = getErrorType(error);
+    return {
+      retryable: true,
+      reason: `Retryable network error: ${errorType}`,
+    };
+  }
+
+  // Unknown — not retryable
+  return {
+    retryable: false,
+    reason: `Non-retryable error: ${getErrorType(error)}`,
+  };
 }

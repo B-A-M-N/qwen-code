@@ -19,6 +19,8 @@ import {
   retryWithBackoff,
   isTransientCapacityError,
   isUnattendedMode,
+  isRetryableNetworkError,
+  classifyError,
 } from './retry.js';
 import { getErrorStatus } from './errors.js';
 import { setSimulate429 } from './testUtils.js';
@@ -1022,5 +1024,232 @@ describe('getErrorStatus', () => {
 
   it('should not match HTTP_STATUS/NNN when adjacent to more digits', () => {
     expect(getErrorStatus(new Error('HTTP_STATUS/4291'))).toBeUndefined();
+  });
+});
+
+describe('isRetryableNetworkError', () => {
+  it('should return true for ECONNRESET', () => {
+    const error = new Error('Connection reset');
+    (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ETIMEDOUT', () => {
+    const error = new Error('Timed out');
+    (error as NodeJS.ErrnoException).code = 'ETIMEDOUT';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ESOCKETTIMEDOUT', () => {
+    const error = new Error('Socket timed out');
+    (error as NodeJS.ErrnoException).code = 'ESOCKETTIMEDOUT';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ECONNREFUSED', () => {
+    const error = new Error('Connection refused');
+    (error as NodeJS.ErrnoException).code = 'ECONNREFUSED';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ENOTFOUND', () => {
+    const error = new Error('Not found');
+    (error as NodeJS.ErrnoException).code = 'ENOTFOUND';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for EHOSTUNREACH', () => {
+    const error = new Error('Host unreachable');
+    (error as NodeJS.ErrnoException).code = 'EHOSTUNREACH';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for EAI_AGAIN', () => {
+    const error = new Error('Temporary failure');
+    (error as NodeJS.ErrnoException).code = 'EAI_AGAIN';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "socket closed" message', () => {
+    const error = new Error('The socket closed unexpectedly');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "stream ended" message', () => {
+    const error = new Error('The stream ended before completion');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "network error" message', () => {
+    const error = new Error('A network error occurred');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "connection reset" message', () => {
+    const error = new Error('connection reset by peer');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "econnreset" message (case-insensitive)', () => {
+    const error = new Error('ECONNRESET: econnreset');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "etimedout" message (case-insensitive)', () => {
+    const error = new Error('etimedout waiting for response');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return false for non-retryable errors', () => {
+    const error = new Error('Bad request');
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return false for errors with non-retryable codes', () => {
+    const error = new Error('Permission denied');
+    (error as NodeJS.ErrnoException).code = 'EACCES';
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return false for null/undefined', () => {
+    expect(isRetryableNetworkError(null)).toBe(false);
+    expect(isRetryableNetworkError(undefined)).toBe(false);
+  });
+});
+
+describe('classifyError', () => {
+  it('should classify 400 as non-retryable', () => {
+    const error = { status: 400 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+    expect(result.status).toBe(400);
+  });
+
+  it('should classify 401 as non-retryable', () => {
+    const error = { status: 401 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 403 as non-retryable', () => {
+    const error = { status: 403 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 404 as non-retryable', () => {
+    const error = { status: 404 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 422 as non-retryable', () => {
+    const error = { status: 422 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 429 as retryable', () => {
+    const error = { status: 429 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Rate limited');
+    expect(result.status).toBe(429);
+  });
+
+  it('should classify 408 as retryable', () => {
+    const error = { status: 408 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Request timeout');
+  });
+
+  it('should classify 409 with transient message as retryable', () => {
+    const error: HttpError = new Error('Lock contention detected');
+    error.status = 409;
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Transient conflict');
+  });
+
+  it('should classify 409 with conflict message as retryable', () => {
+    const error: HttpError = new Error('Conflict detected');
+    error.status = 409;
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('should classify 409 with contention message as retryable', () => {
+    const error: HttpError = new Error('Resource contention');
+    error.status = 409;
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('should classify 409 without transient message as non-retryable', () => {
+    const error = { status: 409, message: 'Version conflict' };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic conflict');
+  });
+
+  it('should classify 500 as retryable', () => {
+    const error = { status: 500 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify 503 as retryable', () => {
+    const error = { status: 503 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify 599 as retryable', () => {
+    const error = { status: 599 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify ECONNRESET as retryable network error', () => {
+    const error = new Error('Connection reset');
+    (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('network error');
+  });
+
+  it('should classify "socket closed" as retryable network error', () => {
+    const error = new Error('The socket closed unexpectedly');
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('network error');
+  });
+
+  it('should classify unknown errors as non-retryable', () => {
+    const error = new Error('Something weird happened');
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
+  });
+
+  it('should classify null as non-retryable', () => {
+    const result = classifyError(null);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
+  });
+
+  it('should classify undefined as non-retryable', () => {
+    const result = classifyError(undefined);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
   });
 });
