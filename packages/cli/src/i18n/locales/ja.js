@@ -1553,4 +1553,16 @@ export default {
     'Not in plan mode. Use "/plan" to enter plan mode first.',
 
   "Set up Qwen Code's status line UI": "Set up Qwen Code's status line UI",
+  'List available models from the configured API endpoint':
+    '設定されたAPIエンドポイントから利用可能なモデルを一覧表示',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'baseUrlが設定されていません。modelProvidersを設定するか、APIエンドポイントを設定してください。',
+  'Failed to fetch models:': 'モデルの取得に失敗しました：',
+  'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.':
+    '認証タイプ {{authType}} ではモデル一覧はサポートされていません。OpenAI互換のエンドポイントのみサポートされています。',
+  'Request timed out. The endpoint may be slow or unreachable.':
+    'リクエストがタイムアウトしました。エンドポイントが遅いか到達できない可能性があります。',
+  'Request cancelled.': 'リクエストがキャンセルされました。',
+  'No models found from the configured endpoint.':
+    '設定されたエンドポイントからモデルが見つかりませんでした。',
 };

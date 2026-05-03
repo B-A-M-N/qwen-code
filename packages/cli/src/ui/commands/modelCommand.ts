@@ -13,7 +13,7 @@ import type {
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
 import { getPersistScopeForModelSelection } from '../../config/modelProvidersScope.js';
-import { AuthType } from '@qwen-code/qwen-code-core';
+import { AuthType , getOrCreateSharedDispatcher } from '@qwen-code/qwen-code-core';
 
 export const modelCommand: SlashCommand = {
   name: 'model',
@@ -181,19 +181,16 @@ export const modelCommand: SlashCommand = {
           };
         }
 
-        const { baseUrl, apiKey, authType } = contentGeneratorConfig;
+        const { baseUrl, apiKey, authType, proxy, customHeaders } =
+          contentGeneratorConfig;
 
-        if (
-          authType &&
-          authType !== AuthType.USE_OPENAI &&
-          authType !== AuthType.USE_ANTHROPIC
-        ) {
+        if (!authType || authType !== AuthType.USE_OPENAI) {
           return {
             type: 'message',
             messageType: 'error',
             content: t(
               'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.',
-              { authType },
+              { authType: authType ?? 'none' },
             ),
           };
         }
@@ -213,6 +210,8 @@ export const modelCommand: SlashCommand = {
             baseUrl,
             apiKey,
             context.abortSignal,
+            proxy,
+            customHeaders,
           );
 
           if (models.length === 0) {
@@ -265,13 +264,21 @@ export async function fetchModels(
   baseUrl: string,
   apiKey?: string,
   abortSignal?: AbortSignal,
+  proxy?: string,
+  customHeaders?: Record<string, string>,
 ): Promise<string[]> {
-  // Normalize baseUrl to avoid double slash (e.g., "https://api.openai.com/v1/")
-  const normalizedUrl = baseUrl.replace(/\/+$/, '');
+  // Normalize baseUrl: strip trailing slashes and trailing /models to avoid
+  // double path (e.g., "https://api.example.com/v1/models" → "/models/models")
+  const normalizedUrl = baseUrl.replace(/\/+$/, '').replace(/\/models$/, '');
   const url = `${normalizedUrl}/models`;
-  const headers: Record<string, string> = {
+
+  // Build headers with customHeaders support (mirrors provider pattern)
+  const defaultHeaders: Record<string, string> = {
     Accept: 'application/json',
   };
+  const headers = customHeaders
+    ? { ...defaultHeaders, ...customHeaders }
+    : defaultHeaders;
 
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
@@ -288,11 +295,15 @@ export async function fetchModels(
     ? AbortSignal.any([timeoutController.signal, abortSignal])
     : timeoutController.signal;
 
+  // Build proxy-aware fetch options (mirrors provider pattern)
+  const runtimeOptions = getOrCreateSharedDispatcher(proxy);
+
   try {
     const response = await fetch(url, {
       method: 'GET',
       headers,
       signal,
+      ...(runtimeOptions ? { dispatcher: runtimeOptions } : {}),
     });
     if (!response.ok) {
       let errorText: string;

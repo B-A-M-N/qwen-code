@@ -1924,4 +1924,5 @@ export default {
   'Request timed out. The endpoint may be slow or unreachable.':
     '请求超时。端点可能响应缓慢或无法访问。',
   'Request cancelled.': '请求已取消。',
+  'No models found from the configured endpoint.': '未从已配置的端点找到模型。',
 };

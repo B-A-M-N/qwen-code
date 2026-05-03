@@ -1220,6 +1220,8 @@ export default {
   'Request timed out. The endpoint may be slow or unreachable.':
     'Request timed out. The endpoint may be slow or unreachable.',
   'Request cancelled.': 'Request cancelled.',
+  'No models found from the configured endpoint.':
+    'No models found from the configured endpoint.',
   // ============================================================================
   // Commands - Clear
   // ============================================================================

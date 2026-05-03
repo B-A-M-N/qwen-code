@@ -2140,4 +2140,16 @@ export default {
 
   "Set up Qwen Code's status line UI":
     "Configurar la interfície de la barra d'estat de Qwen Code",
+  'List available models from the configured API endpoint':
+    'Llistar models disponibles des del punt de connexió API configurat',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    "No s'ha configurat cap baseUrl. Si us plau, configureu modelProviders o establiu el punt de connexió API.",
+  'Failed to fetch models:': 'Error en obtenir els models:',
+  'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.':
+    "La llista de models no és compatible amb el tipus d'autenticació: {{authType}}. Només s'admeten punts de compatibles amb OpenAI.",
+  'Request timed out. The endpoint may be slow or unreachable.':
+    'Sol·licitud expirada. El punt de connexió pot ser lent o inaccessible.',
+  'Request cancelled.': 'Sol·licitud cancel·lada.',
+  'No models found from the configured endpoint.':
+    "No s'ha trobat cap model des del punt de connexió configurat.",
 };

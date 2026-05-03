@@ -600,6 +600,62 @@ describe('modelCommand', () => {
         content: expect.stringContaining('No models found'),
       });
     });
+
+    it('should return "timed out" on AbortError when abortSignal is not aborted (timeout)', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: AuthType.USE_OPENAI,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      const abortError = new DOMException(
+        'The operation was aborted',
+        'AbortError',
+      );
+      vi.spyOn(global, 'fetch').mockRejectedValue(abortError);
+
+      // abortSignal exists but is NOT aborted → timeout
+      mockContext.abortSignal = new AbortController().signal;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('timed out'),
+      });
+    });
+
+    it('should return "cancelled" on AbortError when abortSignal is aborted (user cancel)', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: AuthType.USE_OPENAI,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      const abortError = new DOMException(
+        'The operation was aborted',
+        'AbortError',
+      );
+      vi.spyOn(global, 'fetch').mockRejectedValue(abortError);
+
+      // abortSignal exists AND is aborted → user cancel
+      const controller = new AbortController();
+      controller.abort();
+      mockContext.abortSignal = controller.signal;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('cancelled'),
+      });
+    });
   });
 
   describe('fetchModels error handling', () => {
