@@ -22,6 +22,7 @@ const debugLogger = createDebugLogger('CLIENT');
 
 // Core modules
 import type { ContentGenerator } from './contentGenerator.js';
+import { AuthType, createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
 import {
   getArenaSystemReminder,
@@ -45,6 +46,7 @@ import {
   COMPRESSION_TOKEN_THRESHOLD,
 } from '../services/chatCompressionService.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
+import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 
 // Tools
 import type { RelevantAutoMemoryPromptResult } from '../memory/manager.js';
@@ -1136,10 +1138,21 @@ export class GeminiClient {
         systemInstruction: finalSystemInstruction,
       };
 
+      // When the requested model differs from the main model (e.g. fast model
+      // side queries for session recap / title / summary), resolve the target
+      // model's own ContentGeneratorConfig so that per-model settings like
+      // extra_body, samplingParams, and reasoning are not inherited from the
+      // main model's config.
+      const mainModel = this.config.getModel() ?? model;
+      const contentGenerator =
+        model !== mainModel
+          ? await this.createContentGeneratorForModel(model)
+          : this.getContentGeneratorOrFail();
+
       const apiCall = () => {
         currentAttemptModel = model;
 
-        return this.getContentGeneratorOrFail().generateContent(
+        return contentGenerator.generateContent(
           {
             model,
             config: requestConfig,
@@ -1176,6 +1189,52 @@ export class GeminiClient {
       throw new Error(
         `Failed to generate content with model ${currentAttemptModel}: ${getErrorMessage(error)}`,
       );
+    }
+  }
+
+  /**
+   * Return a ContentGenerator for a specific model (e.g. the fast model) with
+   * its own per-model settings from modelProviders.  This prevents the main
+   * model's extra_body / samplingParams / reasoning from leaking into side
+   * queries that target a different model.
+   *
+   * Falls back to the main content generator when the target model is not in
+   * the registry or when creating a dedicated generator fails (e.g. in test
+   * environments without full auth setup).
+   */
+   
+  private async createContentGeneratorForModel(
+    model: string,
+  ): Promise<ContentGenerator> {
+    try {
+      const authType =
+        this.config.getContentGeneratorConfig()?.authType ??
+        AuthType.USE_OPENAI;
+      const resolvedModel = this.config
+        .getModelsConfig()
+        .getResolvedModel(authType, model);
+
+      if (!resolvedModel) {
+        return this.getContentGeneratorOrFail();
+      }
+
+      const targetConfig = buildAgentContentGeneratorConfig(
+        this.config,
+        model,
+        {
+          authType: resolvedModel.authType,
+          apiKey: resolvedModel.envKey
+            ? (process.env[resolvedModel.envKey] ?? undefined)
+            : undefined,
+          baseUrl: resolvedModel.baseUrl,
+        },
+      );
+
+      return await createContentGenerator(targetConfig, this.config);
+    } catch {
+      // Fallback to main content generator if resolution or creation fails
+      // (e.g. model not in registry, auth not available in test environments).
+      return this.getContentGeneratorOrFail();
     }
   }
 

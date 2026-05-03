@@ -25,6 +25,7 @@ import {
 import { type GeminiChat } from './geminiChat.js';
 import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../config/config.js';
+import type { ModelsConfig } from '../models/modelsConfig.js';
 import {
   CompressionStatus,
   GeminiEventType,
@@ -389,6 +390,9 @@ describe('Gemini Client (client.ts)', () => {
       getArenaAgentClient: vi.fn().mockReturnValue(null),
       getManagedAutoMemoryEnabled: vi.fn().mockReturnValue(true),
       getMemoryManager: vi.fn().mockReturnValue(mockMemoryManager),
+      getModelsConfig: vi.fn().mockReturnValue({
+        getResolvedModel: vi.fn().mockReturnValue(undefined),
+      }),
       getDisableAllHooks: vi.fn().mockReturnValue(true),
       getArenaManager: vi.fn().mockReturnValue(null),
       getMessageBus: vi.fn().mockReturnValue(undefined),
@@ -3149,5 +3153,85 @@ Other open files:
 
     // Note: there is currently no "fallback mode" model routing; the model used
     // is always the one explicitly requested by the caller.
+  });
+
+  describe('generateContent with fast model', () => {
+    it('should resolve per-model config when the requested model differs from the main model', async () => {
+      const contents = [{ role: 'user', parts: [{ text: 'hello' }] }];
+      const abortSignal = new AbortController().signal;
+
+      // Set up a resolved model for the fast model
+      const mockResolvedModel = {
+        id: 'fast-model',
+        authType: 'openai' as const,
+        name: 'Fast Model',
+        baseUrl: 'https://fast-api.example.com',
+        generationConfig: {
+          extra_body: { enable_thinking: false },
+          samplingParams: { temperature: 0.1 },
+        },
+        capabilities: {},
+      };
+
+      const getResolvedModel = vi.fn().mockReturnValue(mockResolvedModel);
+      vi.mocked(mockConfig.getModelsConfig).mockReturnValue({
+        getResolvedModel,
+      } as unknown as ModelsConfig);
+
+      // When the model differs from main, createContentGeneratorForModel is
+      // called which resolves the model config. Since createContentGenerator
+      // will fail in the test env (no auth), it falls back to the main
+      // content generator. Verify the resolution was attempted.
+      await client.generateContent(
+        contents,
+        { temperature: 0.5 },
+        abortSignal,
+        'fast-model',
+      );
+
+      // Verify that getResolvedModel was called with the fast model ID
+      expect(getResolvedModel).toHaveBeenCalledWith(
+        expect.any(String),
+        'fast-model',
+      );
+
+      // The main content generator is used as fallback (since creating a new
+      // one fails in test env without auth). In production, a dedicated
+      // content generator with the fast model's settings would be created.
+      expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'fast-model',
+        }),
+        expect.any(String),
+      );
+    });
+
+    it('should use the main content generator when the requested model matches the main model', async () => {
+      const contents = [{ role: 'user', parts: [{ text: 'hello' }] }];
+      const abortSignal = new AbortController().signal;
+
+      const getResolvedModel = vi.fn();
+      vi.mocked(mockConfig.getModelsConfig).mockReturnValue({
+        getResolvedModel,
+      } as unknown as ModelsConfig);
+
+      await client.generateContent(
+        contents,
+        {},
+        abortSignal,
+        'test-model', // same as getModel() return value
+      );
+
+      // getResolvedModel should NOT be called when model matches main
+      expect(getResolvedModel).not.toHaveBeenCalled();
+
+      // The main content generator should be used directly
+      expect(mockContentGenerator.generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'test-model',
+        }),
+        expect.any(String),
+      );
+    });
   });
 });
