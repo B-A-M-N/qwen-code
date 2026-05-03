@@ -294,8 +294,6 @@ export async function fetchModels(
       headers,
       signal,
     });
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       let errorText: string;
       try {
