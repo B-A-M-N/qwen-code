@@ -1773,7 +1773,6 @@ hello
       const mockChat: Partial<GeminiChat> = {
         addHistory: vi.fn(),
         getHistory: vi.fn().mockReturnValue([]),
-        stripThoughtsFromHistory: vi.fn(),
       };
       client['chat'] = mockChat as GeminiChat;
 
@@ -1823,7 +1822,6 @@ hello
       const mockChat: Partial<GeminiChat> = {
         addHistory: vi.fn(),
         getHistory: vi.fn().mockReturnValue([]),
-        stripThoughtsFromHistory: vi.fn(),
       };
       client['chat'] = mockChat as GeminiChat;
 
