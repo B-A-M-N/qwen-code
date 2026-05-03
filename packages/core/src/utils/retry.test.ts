@@ -99,7 +99,7 @@ describe('retryWithBackoff', () => {
     // 2. IMPORTANT: Attach the rejection expectation to the promise *immediately*.
     //    This ensures a 'catch' handler is present before the promise can reject.
     //    The result is a new promise that resolves when the assertion is met.
-     
+
     const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 3',
     );
@@ -119,10 +119,10 @@ describe('retryWithBackoff', () => {
     // This function will fail more than 7 times to ensure all retries are used.
     const mockFn = createFailingFunction(10);
 
-    const promise = retryWithBackoff(mockFn);
+    const promise = retryWithBackoff(mockFn, { initialDelayMs: 10 });
 
     // Expect it to fail with the error from the 7th attempt.
-     
+
     const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
@@ -136,10 +136,13 @@ describe('retryWithBackoff', () => {
     // This function will fail more than 7 times to ensure all retries are used.
     const mockFn = createFailingFunction(10);
 
-    const promise = retryWithBackoff(mockFn, { maxAttempts: undefined });
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: undefined,
+      initialDelayMs: 10,
+    });
 
     // Expect it to fail with the error from the 7th attempt.
-     
+
     const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
@@ -191,7 +194,7 @@ describe('retryWithBackoff', () => {
 
     // Attach the rejection expectation *before* running timers
     const assertionPromise =
-      await expect(promise).rejects.toThrow('Too Many Requests');  
+      await expect(promise).rejects.toThrow('Too Many Requests');
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -252,14 +255,14 @@ describe('retryWithBackoff', () => {
     const runRetry = () =>
       retryWithBackoff(mockFn, {
         maxAttempts: 2, // Only one retry, so one delay
-        initialDelayMs: 100,
-        maxDelayMs: 1000,
+        initialDelayMs: 10,
+        maxDelayMs: 100,
       });
 
     // We expect rejections as mockFn fails 5 times
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
-     
+
     const assertionPromise1 = await expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
@@ -274,7 +277,7 @@ describe('retryWithBackoff', () => {
 
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
-     
+
     const assertionPromise2 = await expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
@@ -293,10 +296,10 @@ describe('retryWithBackoff', () => {
       throw new Error('Delays were not captured for jitter test');
     }
 
-    // Ensure delays are within the expected jitter range [70, 130] for initialDelayMs = 100
+    // Ensure delays are within the expected jitter range [7, 13] for initialDelayMs = 10
     [...firstDelaySet, ...secondDelaySet].forEach((d) => {
-      expect(d).toBeGreaterThanOrEqual(100 * 0.7);
-      expect(d).toBeLessThanOrEqual(100 * 1.3);
+      expect(d).toBeGreaterThanOrEqual(10 * 0.7);
+      expect(d).toBeLessThanOrEqual(10 * 1.3);
     });
   });
 
@@ -658,7 +661,6 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: true,
     });
 
-     
     const assertionPromise = await expect(promise).rejects.toThrow(
       'Internal Server Error',
     );
@@ -743,7 +745,7 @@ describe('retryWithBackoff - persistent mode', () => {
 
     const promise = retryWithBackoff(fn, {
       maxAttempts: 3,
-      initialDelayMs: 10000, // Long delay so abort happens during sleep
+      initialDelayMs: 100, // Short delay; abort via setTimeout below
       persistentMode: true,
       heartbeatIntervalMs: 50,
       signal: controller.signal,
@@ -752,7 +754,6 @@ describe('retryWithBackoff - persistent mode', () => {
     // Abort after the first retry starts waiting
     setTimeout(() => controller.abort(), 100);
 
-     
     const assertionPromise = await expect(promise).rejects.toThrow(
       'Retry aborted by signal',
     );
@@ -775,7 +776,6 @@ describe('retryWithBackoff - persistent mode', () => {
       shouldRetryOnError: () => false, // force fast-fail
     });
 
-     
     const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
@@ -823,7 +823,6 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: false,
     });
 
-     
     const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
