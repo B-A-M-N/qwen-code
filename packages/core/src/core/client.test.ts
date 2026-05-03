@@ -1749,6 +1749,100 @@ hello
       );
     });
 
+    it('should not block the main request when auto-memory recall is slow', async () => {
+      // Simulate a recall that takes longer than the 2.5s deadline
+      mockMemoryManager.recall.mockReturnValue(
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                prompt: '## Relevant memory\n\nSlow memory result.',
+                selectedDocs: [],
+                strategy: 'model',
+              }),
+            10_000,
+          ),
+        ),
+      );
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+        stripThoughtsFromHistory: vi.fn(),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      vi.useFakeTimers();
+      try {
+        const streamPromise = (async () => {
+          const stream = client.sendMessageStream(
+            [{ text: 'Quick question' }],
+            new AbortController().signal,
+            'prompt-id-slow-memory',
+          );
+          for await (const _ of stream) {
+            // consume stream
+          }
+        })();
+
+        // Advance past the 2.5s deadline — the main request should proceed
+        await vi.advanceTimersByTimeAsync(3_000);
+        await streamPromise;
+
+        // The main request should have been called without the slow memory
+        expect(mockTurnRunFn).toHaveBeenCalledWith(
+          'test-model',
+          expect.not.arrayContaining([
+            expect.stringContaining('Slow memory result'),
+          ]),
+          expect.any(AbortSignal),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should include auto-memory prompt when recall completes within deadline', async () => {
+      // Simulate a fast recall that completes well within the deadline
+      mockMemoryManager.recall.mockResolvedValue({
+        prompt: '## Relevant memory\n\nFast memory result.',
+        selectedDocs: [],
+        strategy: 'heuristic',
+      });
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+        stripThoughtsFromHistory: vi.fn(),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      const stream = client.sendMessageStream(
+        [{ text: 'Quick question' }],
+        new AbortController().signal,
+        'prompt-id-fast-memory',
+      );
+      for await (const _ of stream) {
+        // consume stream
+      }
+
+      expect(mockTurnRunFn).toHaveBeenCalledWith(
+        'test-model',
+        expect.arrayContaining(['## Relevant memory\n\nFast memory result.']),
+        expect.any(AbortSignal),
+      );
+    });
+
     it('should run managed auto-memory extraction after a completed user query', async () => {
       mockMemoryManager.scheduleExtract.mockResolvedValue({
         touchedTopics: ['user'],

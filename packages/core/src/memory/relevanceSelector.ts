@@ -90,7 +90,7 @@ export async function selectRelevantAutoMemoryDocumentsByModel(
     purpose: 'auto-memory-recall',
     contents,
     schema: RESPONSE_SCHEMA,
-    abortSignal: AbortSignal.timeout(5_000),
+    abortSignal: AbortSignal.timeout(2_000),
     systemInstruction: SELECT_MEMORIES_SYSTEM_PROMPT,
     config: {
       temperature: 0,

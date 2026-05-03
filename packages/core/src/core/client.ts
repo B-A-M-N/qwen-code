@@ -130,6 +130,29 @@ const EMPTY_RELEVANT_AUTO_MEMORY_RESULT: RelevantAutoMemoryPromptResult = {
   strategy: 'none',
 };
 
+/**
+ * Resolve the auto-memory recall promise with a hard deadline.
+ * If the recall (model-driven selection + heuristic fallback) does not complete
+ * within the deadline, return an empty result so the main request is not delayed.
+ *
+ * The deadline is set slightly above the model-driven selector's own
+ * AbortSignal.timeout (2s) to give the heuristic fallback time to complete,
+ * but low enough that the user does not perceive a delay on every turn.
+ */
+async function resolveAutoMemoryWithDeadline(
+  promise: Promise<RelevantAutoMemoryPromptResult> | undefined,
+): Promise<RelevantAutoMemoryPromptResult> {
+  if (!promise) {
+    return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
+  }
+
+  const deadline = new Promise<RelevantAutoMemoryPromptResult>((resolve) => {
+    setTimeout(() => resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT), 2_500);
+  });
+
+  return Promise.race([promise, deadline]);
+}
+
 export class GeminiClient {
   private chat?: GeminiChat;
   private sessionTurnCount = 0;
@@ -860,9 +883,9 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       const systemReminders = [];
-      const relevantAutoMemory = relevantAutoMemoryPromise
-        ? await relevantAutoMemoryPromise
-        : EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
+      const relevantAutoMemory = await resolveAutoMemoryWithDeadline(
+        relevantAutoMemoryPromise,
+      );
       const relevantAutoMemoryPrompt = relevantAutoMemory.prompt;
 
       if (relevantAutoMemoryPrompt) {
