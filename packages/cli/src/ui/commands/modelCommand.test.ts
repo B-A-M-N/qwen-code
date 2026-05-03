@@ -458,4 +458,48 @@ describe('/model list subcommand', () => {
       content: 'No models found from the configured endpoint.',
     });
   });
+
+  it('should return model list on success path', async () => {
+    const mockConfig = createMockConfig({
+      model: 'test-model',
+      authType: AuthType.USE_OPENAI,
+      baseUrl: 'https://api.example.com/v1/',
+    });
+    mockContext.services.config = mockConfig as Config;
+
+    const mockResponse = {
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        data: [{ id: 'model-a' }, { id: 'model-b' }],
+      }),
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
+
+    const result = await modelCommand.subCommands![0].action!(mockContext, '');
+
+    expect(result).toEqual({
+      type: 'message',
+      messageType: 'info',
+      content: 'model-a\nmodel-b',
+    });
+  });
+
+  it('should return error when fetchModels throws', async () => {
+    const mockConfig = createMockConfig({
+      model: 'test-model',
+      authType: AuthType.USE_OPENAI,
+      baseUrl: 'https://api.example.com/v1/',
+    });
+    mockContext.services.config = mockConfig as Config;
+
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network failure'));
+
+    const result = await modelCommand.subCommands![0].action!(mockContext, '');
+
+    expect(result).toEqual({
+      type: 'message',
+      messageType: 'error',
+      content: expect.stringContaining('Failed to fetch models'),
+    });
+  });
 });
