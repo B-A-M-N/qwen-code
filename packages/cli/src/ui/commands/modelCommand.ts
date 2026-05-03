@@ -13,7 +13,10 @@ import type {
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
 import { getPersistScopeForModelSelection } from '../../config/modelProvidersScope.js';
-import { AuthType , getOrCreateSharedDispatcher } from '@qwen-code/qwen-code-core';
+import {
+  AuthType,
+  getOrCreateSharedDispatcher,
+} from '@qwen-code/qwen-code-core';
 
 export const modelCommand: SlashCommand = {
   name: 'model',
@@ -181,7 +184,7 @@ export const modelCommand: SlashCommand = {
           };
         }
 
-        const { baseUrl, apiKey, authType, proxy, customHeaders } =
+        const { baseUrl, apiKey, authType, proxy, customHeaders, timeout } =
           contentGeneratorConfig;
 
         if (!authType || authType !== AuthType.USE_OPENAI) {
@@ -212,6 +215,7 @@ export const modelCommand: SlashCommand = {
             context.abortSignal,
             proxy,
             customHeaders,
+            timeout,
           );
 
           if (models.length === 0) {
@@ -258,7 +262,7 @@ export const modelCommand: SlashCommand = {
  * Extra fields (owned_by, created, etc.) are ignored.
  * Export for testing.
  */
-const FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 
 export async function fetchModels(
   baseUrl: string,
@@ -266,10 +270,11 @@ export async function fetchModels(
   abortSignal?: AbortSignal,
   proxy?: string,
   customHeaders?: Record<string, string>,
+  timeout?: number,
 ): Promise<string[]> {
-  // Normalize baseUrl: strip trailing slashes and trailing /models to avoid
+  // Normalize baseUrl: strip trailing slashes and trailing /models (case-insensitive) to avoid
   // double path (e.g., "https://api.example.com/v1/models" → "/models/models")
-  const normalizedUrl = baseUrl.replace(/\/+$/, '').replace(/\/models$/, '');
+  const normalizedUrl = baseUrl.replace(/\/+$/, '').replace(/\/models$/i, '');
   const url = `${normalizedUrl}/models`;
 
   // Build headers with customHeaders support (mirrors provider pattern)
@@ -278,18 +283,26 @@ export async function fetchModels(
   };
   const headers = customHeaders
     ? { ...defaultHeaders, ...customHeaders }
-    : defaultHeaders;
+    : { ...defaultHeaders };
+
+  // Deduplicate any existing authorization header (case-insensitive) before
+  // setting the Bearer token to avoid sending two Authorization headers when
+  // customHeaders contains a lowercase 'authorization' key.
+  const existingAuthKey = Object.keys(headers).find(
+    (k) => k.toLowerCase() === 'authorization',
+  );
+  if (existingAuthKey) {
+    delete headers[existingAuthKey];
+  }
 
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
   // Set up timeout and optional user abort signal
+  const fetchTimeout = timeout ?? DEFAULT_FETCH_TIMEOUT_MS;
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(
-    () => timeoutController.abort(),
-    FETCH_TIMEOUT_MS,
-  );
+  const timeoutId = setTimeout(() => timeoutController.abort(), fetchTimeout);
 
   const signal = abortSignal
     ? AbortSignal.any([timeoutController.signal, abortSignal])

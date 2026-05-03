@@ -10,9 +10,20 @@ import { type CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import {
   AuthType,
+  getOrCreateSharedDispatcher,
   type ContentGeneratorConfig,
   type Config,
 } from '@qwen-code/qwen-code-core';
+
+// Mock the proxy dispatcher module so tests control its return value.
+vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+  return {
+    ...actual,
+    getOrCreateSharedDispatcher: vi.fn().mockReturnValue(undefined),
+  };
+});
 
 // Helper function to create a mock config
 function createMockConfig(
@@ -376,6 +387,122 @@ describe('modelCommand', () => {
         'https://api.example.com/v1/models',
         expect.any(Object),
       );
+    });
+
+    it('should strip trailing /models case-insensitively to avoid double path', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels('https://api.example.com/v1/Models', 'key');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.any(Object),
+      );
+    });
+
+    it('should merge customHeaders into fetch request headers', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels(
+        'https://api.example.com/v1',
+        'key',
+        undefined,
+        undefined,
+        {
+          'X-Custom': 'value',
+        },
+      );
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: 'application/json',
+            'X-Custom': 'value',
+            Authorization: 'Bearer key',
+          }),
+        }),
+      );
+    });
+
+    it('should pass dispatcher from getOrCreateSharedDispatcher when proxy is set', async () => {
+      const mockDispatcher = { fake: true };
+      vi.mocked(getOrCreateSharedDispatcher).mockReturnValue(
+        mockDispatcher as never,
+      );
+
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels(
+        'https://api.example.com/v1',
+        'key',
+        undefined,
+        'http://proxy:8080',
+      );
+      expect(getOrCreateSharedDispatcher).toHaveBeenCalledWith(
+        'http://proxy:8080',
+      );
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({ dispatcher: mockDispatcher }),
+      );
+
+      vi.mocked(getOrCreateSharedDispatcher).mockReturnValue(
+        undefined as never,
+      );
+    });
+
+    it('should deduplicate authorization header when customHeaders has lowercase key', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      await fetchModels(
+        'https://api.example.com/v1',
+        'my-key',
+        undefined,
+        undefined,
+        {
+          authorization: 'should-be-replaced',
+        },
+      );
+      // Should only have one Authorization header with the apiKey value
+      const callArgs = fetchSpy.mock.calls[0][1] as {
+        headers: Record<string, string>;
+      };
+      const authHeaders = Object.keys(callArgs.headers).filter(
+        (k) => k.toLowerCase() === 'authorization',
+      );
+      expect(authHeaders).toHaveLength(1);
+      expect(callArgs.headers['Authorization']).toBe('Bearer my-key');
     });
 
     it('should return empty array when data array is empty', async () => {
