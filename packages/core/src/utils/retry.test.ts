@@ -99,8 +99,8 @@ describe('retryWithBackoff', () => {
     // 2. IMPORTANT: Attach the rejection expectation to the promise *immediately*.
     //    This ensures a 'catch' handler is present before the promise can reject.
     //    The result is a new promise that resolves when the assertion is met.
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow(
+     
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 3',
     );
 
@@ -122,8 +122,8 @@ describe('retryWithBackoff', () => {
     const promise = retryWithBackoff(mockFn);
 
     // Expect it to fail with the error from the 7th attempt.
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow(
+     
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -139,8 +139,8 @@ describe('retryWithBackoff', () => {
     const promise = retryWithBackoff(mockFn, { maxAttempts: undefined });
 
     // Expect it to fail with the error from the 7th attempt.
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow(
+     
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -191,7 +191,7 @@ describe('retryWithBackoff', () => {
 
     // Attach the rejection expectation *before* running timers
     const assertionPromise =
-      expect(promise).rejects.toThrow('Too Many Requests'); // eslint-disable-line vitest/valid-expect
+      await expect(promise).rejects.toThrow('Too Many Requests');  
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -259,8 +259,8 @@ describe('retryWithBackoff', () => {
     // We expect rejections as mockFn fails 5 times
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise1 = expect(promise1).rejects.toThrow();
+     
+    const assertionPromise1 = await expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
 
@@ -274,8 +274,8 @@ describe('retryWithBackoff', () => {
 
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise2 = expect(promise2).rejects.toThrow();
+     
+    const assertionPromise2 = await expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
 
@@ -501,6 +501,34 @@ describe('isTransientCapacityError', () => {
     expect(isTransientCapacityError(new Error('generic'))).toBe(false);
     expect(isTransientCapacityError(null)).toBe(false);
   });
+
+  it('should return true for 408 errors', () => {
+    const error = { status: 408 };
+    expect(isTransientCapacityError(error)).toBe(true);
+  });
+
+  it('should return true for ECONNRESET network errors', () => {
+    const error = new Error('Connection reset') as NodeJS.ErrnoException;
+    error.code = 'ECONNRESET';
+    expect(isTransientCapacityError(error)).toBe(true);
+  });
+
+  it('should return true for ETIMEDOUT network errors', () => {
+    const error = new Error('Timed out') as NodeJS.ErrnoException;
+    error.code = 'ETIMEDOUT';
+    expect(isTransientCapacityError(error)).toBe(true);
+  });
+
+  it('should return true for "socket closed" message', () => {
+    const error = new Error('The socket closed unexpectedly');
+    expect(isTransientCapacityError(error)).toBe(true);
+  });
+
+  it('should return false for non-retryable network codes', () => {
+    const error = new Error('Permission denied') as NodeJS.ErrnoException;
+    error.code = 'EACCES';
+    expect(isTransientCapacityError(error)).toBe(false);
+  });
 });
 
 describe('isUnattendedMode', () => {
@@ -630,8 +658,8 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: true,
     });
 
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow(
+     
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Internal Server Error',
     );
     await vi.runAllTimersAsync();
@@ -724,8 +752,8 @@ describe('retryWithBackoff - persistent mode', () => {
     // Abort after the first retry starts waiting
     setTimeout(() => controller.abort(), 100);
 
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow(
+     
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Retry aborted by signal',
     );
     await vi.runAllTimersAsync();
@@ -747,8 +775,8 @@ describe('retryWithBackoff - persistent mode', () => {
       shouldRetryOnError: () => false, // force fast-fail
     });
 
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow('Rate limited');
+     
+    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -795,8 +823,8 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: false,
     });
 
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise = expect(promise).rejects.toThrow('Rate limited');
+     
+    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1251,5 +1279,244 @@ describe('classifyError', () => {
     const result = classifyError(undefined);
     expect(result.retryable).toBe(false);
     expect(result.reason).toContain('Non-retryable');
+  });
+});
+
+describe('retryWithBackoff integration — defaultShouldRetry new error paths', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setSimulate429(false);
+    console.warn = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  // --- 408 Request Timeout ---
+
+  it('should retry on 408 via defaultShouldRetry', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Request Timeout') as any;
+        error.status = 408;
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should exhaust retries on persistent 408', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Request Timeout') as any;
+      error.status = 408;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+
+    const assertionPromise = await expect(promise).rejects.toThrow('Request Timeout');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  // --- 409 Conflict (transient vs deterministic) ---
+
+  it('should retry on 409 with lock contention message', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error: HttpError = new Error('Lock contention on resource');
+        error.status = 409;
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should NOT retry on 409 without transient message', async () => {
+    const mockFn = vi.fn(async () => {
+      const error: HttpError = new Error('Resource already exists');
+      error.status = 409;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    // Attach rejection handler before running timers to avoid unhandled rejection
+    const assertionPromise = await expect(promise).rejects.toThrow(
+      'Resource already exists',
+    );
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Network errors ---
+
+  it('should retry on ECONNRESET via defaultShouldRetry', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Connection reset') as NodeJS.ErrnoException;
+        error.code = 'ECONNRESET';
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should retry on ETIMEDOUT via defaultShouldRetry', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Operation timed out') as NodeJS.ErrnoException;
+        error.code = 'ETIMEDOUT';
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should retry on "socket closed" message via defaultShouldRetry', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('The socket closed unexpectedly');
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should exhaust retries on persistent network error', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Connection reset') as NodeJS.ErrnoException;
+      error.code = 'ECONNRESET';
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+
+    const assertionPromise =
+      await expect(promise).rejects.toThrow('Connection reset');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Non-retryable status codes should NOT retry ---
+
+  it('should NOT retry on 401 via defaultShouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Unauthorized') as any;
+      error.status = 401;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    const assertionPromise = await expect(promise).rejects.toThrow('Unauthorized');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 404 via defaultShouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Not Found') as any;
+      error.status = 404;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    const assertionPromise = await expect(promise).rejects.toThrow('Not Found');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
   });
 });

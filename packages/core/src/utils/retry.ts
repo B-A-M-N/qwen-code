@@ -57,41 +57,34 @@ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
 
 /**
  * Default predicate function to determine if a retry should be attempted.
- * Retries on 429 (Too Many Requests) and 5xx server errors.
+ * Retries on transport/provider failures: 429, 408, transient 409, 5xx, and
+ * network errors. Never retries deterministic request errors (400, 401, 403,
+ * 404, 422).
+ *
+ * Delegates to {@link classifyError} to avoid duplicating classification logic.
+ *
  * @param error The error object.
  * @returns True if the error is a transient error, false otherwise.
  */
 function defaultShouldRetry(error: Error | unknown): boolean {
-  const status = getErrorStatus(error);
-  if (
-    status === 429 ||
-    status === 408 ||
-    (status !== undefined && status >= 500 && status < 600)
-  ) {
-    return true;
-  }
-
-  // Check for 409 conflict — may be transient (lock contention)
-  if (status === 409) {
-    return isTransientConflict(error);
-  }
-
-  // Check for retryable network errors
-  if (isRetryableNetworkError(error)) {
-    return true;
-  }
-
-  return false;
+  return classifyError(error).retryable;
 }
 
 /**
  * Determines if an error is a transient capacity error eligible for persistent retry.
- * Only 429 (Rate Limit) and 529 (Overloaded) qualify — HTTP 500 is excluded
- * because it may indicate a permanent server bug.
+ * Includes 429 (Rate Limit), 529 (Overloaded), 408 (Request Timeout), and
+ * retryable network transport errors (ECONNRESET, ETIMEDOUT, etc.).
+ * HTTP 500 is excluded because it may indicate a permanent server bug.
  */
 export function isTransientCapacityError(error: unknown): boolean {
   const status = getErrorStatus(error);
-  return status === 429 || status === 529;
+  if (status === 429 || status === 529 || status === 408) {
+    return true;
+  }
+  if (isRetryableNetworkError(error)) {
+    return true;
+  }
+  return false;
 }
 
 /**

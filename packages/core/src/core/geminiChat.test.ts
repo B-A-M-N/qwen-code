@@ -1700,6 +1700,180 @@ describe('GeminiChat', async () => {
         ).toHaveBeenCalledTimes(2);
       });
 
+      it('should retry on 408 Request Timeout errors', async () => {
+        const error408 = new ApiError({
+          message: 'Request Timeout',
+          status: 408,
+        });
+
+        vi.mocked(mockContentGenerator.generateContentStream)
+          .mockRejectedValueOnce(error408)
+          .mockResolvedValueOnce(
+            (async function* () {
+              yield {
+                candidates: [
+                  {
+                    content: { parts: [{ text: 'Recovered from 408' }] },
+                    finishReason: 'STOP',
+                  },
+                ],
+              } as unknown as GenerateContentResponse;
+            })(),
+          );
+
+        const stream = await chat.sendMessageStream(
+          'test-model',
+          { message: 'test' },
+          'prompt-id-408-retry',
+        );
+
+        const events: StreamEvent[] = [];
+        for await (const event of stream) {
+          events.push(event);
+        }
+
+        // Should be called twice (initial + retry)
+        expect(
+          mockContentGenerator.generateContentStream,
+        ).toHaveBeenCalledTimes(2);
+
+        // Should have successful content
+        expect(
+          events.some(
+            (e) =>
+              e.type === StreamEventType.CHUNK &&
+              e.value.candidates?.[0]?.content?.parts?.[0]?.text ===
+                'Recovered from 408',
+          ),
+        ).toBe(true);
+      });
+
+      it('should retry on 409 transient conflict errors', async () => {
+        const error409 = new ApiError({
+          message: 'Lock contention detected',
+          status: 409,
+        });
+
+        vi.mocked(mockContentGenerator.generateContentStream)
+          .mockRejectedValueOnce(error409)
+          .mockResolvedValueOnce(
+            (async function* () {
+              yield {
+                candidates: [
+                  {
+                    content: { parts: [{ text: 'Recovered from 409' }] },
+                    finishReason: 'STOP',
+                  },
+                ],
+              } as unknown as GenerateContentResponse;
+            })(),
+          );
+
+        const stream = await chat.sendMessageStream(
+          'test-model',
+          { message: 'test' },
+          'prompt-id-409-retry',
+        );
+
+        const events: StreamEvent[] = [];
+        for await (const event of stream) {
+          events.push(event);
+        }
+
+        // Should be called twice (initial + retry)
+        expect(
+          mockContentGenerator.generateContentStream,
+        ).toHaveBeenCalledTimes(2);
+
+        expect(
+          events.some(
+            (e) =>
+              e.type === StreamEventType.CHUNK &&
+              e.value.candidates?.[0]?.content?.parts?.[0]?.text ===
+                'Recovered from 409',
+          ),
+        ).toBe(true);
+      });
+
+      it('should NOT retry on 409 deterministic conflict errors', async () => {
+        const error409 = new ApiError({
+          message: 'Resource already exists',
+          status: 409,
+        });
+
+        vi.mocked(mockContentGenerator.generateContentStream).mockRejectedValue(
+          error409,
+        );
+
+        const stream = await chat.sendMessageStream(
+          'test-model',
+          { message: 'test' },
+          'prompt-id-409-noretry',
+        );
+
+        await expect(
+          (async () => {
+            for await (const _ of stream) {
+              /* consume stream */
+            }
+          })(),
+        ).rejects.toThrow(error409);
+
+        // Should only be called once (no retry)
+        expect(
+          mockContentGenerator.generateContentStream,
+        ).toHaveBeenCalledTimes(1);
+      });
+
+      it('should retry on network errors (ECONNRESET)', async () => {
+        const networkError = new Error(
+          'Connection reset',
+        ) as NodeJS.ErrnoException;
+        networkError.code = 'ECONNRESET';
+
+        vi.mocked(mockContentGenerator.generateContentStream)
+          .mockRejectedValueOnce(networkError)
+          .mockResolvedValueOnce(
+            (async function* () {
+              yield {
+                candidates: [
+                  {
+                    content: {
+                      parts: [{ text: 'Recovered from network error' }],
+                    },
+                    finishReason: 'STOP',
+                  },
+                ],
+              } as unknown as GenerateContentResponse;
+            })(),
+          );
+
+        const stream = await chat.sendMessageStream(
+          'test-model',
+          { message: 'test' },
+          'prompt-id-network-retry',
+        );
+
+        const events: StreamEvent[] = [];
+        for await (const event of stream) {
+          events.push(event);
+        }
+
+        // Should be called twice (initial + retry)
+        expect(
+          mockContentGenerator.generateContentStream,
+        ).toHaveBeenCalledTimes(2);
+
+        expect(
+          events.some(
+            (e) =>
+              e.type === StreamEventType.CHUNK &&
+              e.value.candidates?.[0]?.content?.parts?.[0]?.text ===
+                'Recovered from network error',
+          ),
+        ).toBe(true);
+      });
+
       afterEach(() => {
         // Reset to default behavior
         mockRetryWithBackoff.mockImplementation(async (apiCall) => apiCall());

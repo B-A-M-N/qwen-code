@@ -17,7 +17,11 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import { createUserContent, FinishReason } from '@google/genai';
-import { retryWithBackoff, isUnattendedMode } from '../utils/retry.js';
+import {
+  retryWithBackoff,
+  isUnattendedMode,
+  classifyError,
+} from '../utils/retry.js';
 import { getErrorStatus } from '../utils/errors.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { parseAndFormatApiError } from '../utils/errorParsing.js';
@@ -713,6 +717,7 @@ export class GeminiChat {
       );
     const streamResponse = await retryWithBackoff(apiCall, {
       shouldRetryOnError: (error: unknown) => {
+        // Never retry deterministic client errors regardless of classification
         if (error instanceof Error) {
           if (isSchemaDepthError(error.message)) return false;
           if (isInvalidArgumentError(error.message)) return false;
@@ -720,10 +725,9 @@ export class GeminiChat {
 
         const status = getErrorStatus(error);
         if (status === 400) return false;
-        if (status === 429) return true;
-        if (status && status >= 500 && status < 600) return true;
 
-        return false;
+        // Delegate to classifyError for all other cases (408, 409, 429, 5xx, network)
+        return classifyError(error).retryable;
       },
       authType: this.config.getContentGeneratorConfig()?.authType,
       persistentMode: isUnattendedMode(),
