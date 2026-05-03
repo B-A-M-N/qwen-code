@@ -100,7 +100,7 @@ describe('retryWithBackoff', () => {
     //    This ensures a 'catch' handler is present before the promise can reject.
     //    The result is a new promise that resolves when the assertion is met.
 
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 3',
     );
 
@@ -123,7 +123,7 @@ describe('retryWithBackoff', () => {
 
     // Expect it to fail with the error from the 7th attempt.
 
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -143,7 +143,7 @@ describe('retryWithBackoff', () => {
 
     // Expect it to fail with the error from the 7th attempt.
 
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -194,7 +194,7 @@ describe('retryWithBackoff', () => {
 
     // Attach the rejection expectation *before* running timers
     const assertionPromise =
-      await expect(promise).rejects.toThrow('Too Many Requests');
+      expect(promise).rejects.toThrow('Too Many Requests');
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -263,7 +263,7 @@ describe('retryWithBackoff', () => {
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise1 = await expect(promise1).rejects.toThrow();
+    const assertionPromise1 = expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
 
@@ -278,7 +278,7 @@ describe('retryWithBackoff', () => {
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise2 = await expect(promise2).rejects.toThrow();
+    const assertionPromise2 = expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
 
@@ -661,7 +661,7 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: true,
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Internal Server Error',
     );
     await vi.runAllTimersAsync();
@@ -754,7 +754,7 @@ describe('retryWithBackoff - persistent mode', () => {
     // Abort after the first retry starts waiting
     setTimeout(() => controller.abort(), 100);
 
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Retry aborted by signal',
     );
     await vi.runAllTimersAsync();
@@ -776,7 +776,8 @@ describe('retryWithBackoff - persistent mode', () => {
       shouldRetryOnError: () => false, // force fast-fail
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
+    const assertionPromise =
+      expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -823,7 +824,8 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: false,
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
+    const assertionPromise =
+      expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1331,7 +1333,8 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow('Request Timeout');
+    const assertionPromise =
+      expect(promise).rejects.toThrow('Request Timeout');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1377,7 +1380,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     });
 
     // Attach rejection handler before running timers to avoid unhandled rejection
-    const assertionPromise = await expect(promise).rejects.toThrow(
+    const assertionPromise = expect(promise).rejects.toThrow(
       'Resource already exists',
     );
     await vi.runAllTimersAsync();
@@ -1472,7 +1475,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     });
 
     const assertionPromise =
-      await expect(promise).rejects.toThrow('Connection reset');
+      expect(promise).rejects.toThrow('Connection reset');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1493,7 +1496,8 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow('Unauthorized');
+    const assertionPromise =
+      expect(promise).rejects.toThrow('Unauthorized');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1512,7 +1516,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise = await expect(promise).rejects.toThrow('Not Found');
+    const assertionPromise = expect(promise).rejects.toThrow('Not Found');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
