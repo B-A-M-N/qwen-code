@@ -2054,4 +2054,9 @@ export default {
     'Not in plan mode. Use "/plan" to enter plan mode first.',
 
   "Set up Qwen Code's status line UI": "Set up Qwen Code's status line UI",
+  Cost: 'Cost',
+  Estimated: 'Estimated',
+  'Estimated cost:': 'Estimated cost:',
+  'No model usage data yet.': 'No model usage data yet.',
+  'No tool usage data yet.': 'No tool usage data yet.',
 };

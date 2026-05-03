@@ -1675,4 +1675,9 @@ export default {
   'Not in plan mode. Use "/plan" to enter plan mode first.':
     '未處於計劃模式。請先使用 "/plan" 進入計劃模式。',
   "Set up Qwen Code's status line UI": '配置 Qwen Code 的狀態欄',
+  Cost: 'Cost',
+  Estimated: 'Estimated',
+  'Estimated cost:': 'Estimated cost:',
+  'No model usage data yet.': 'No model usage data yet.',
+  'No tool usage data yet.': 'No tool usage data yet.',
 };

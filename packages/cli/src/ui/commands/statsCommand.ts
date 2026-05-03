@@ -105,11 +105,11 @@ export const statsCommand: SlashCommand = {
               pricing: pricing?.[modelName],
             });
             if (cost != null) {
-              lines.push(`  Estimated cost: $${cost.toFixed(4)}`);
+              lines.push(`  ${t('Estimated cost:')} $${cost.toFixed(4)}`);
             }
           }
           if (lines.length === 0) {
-            lines.push('No model usage data yet.');
+            lines.push(t('No model usage data yet.'));
           }
           return {
             type: 'message',
@@ -143,7 +143,7 @@ export const statsCommand: SlashCommand = {
                   `Tool calls: ${tools.totalCalls} total (${tools.totalSuccess} ok, ${tools.totalFail} fail)`,
                   ...toolNames.map((name) => `  ${name}`),
                 ].join('\n')
-              : 'No tool usage data yet.';
+              : t('No tool usage data yet.');
           return { type: 'message', messageType: 'info', content };
         }
         context.ui.addItem(

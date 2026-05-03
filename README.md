@@ -172,15 +172,16 @@ Here is a complete example:
 
 **Step 2:** Understand each field
 
-| Field                        | What it does                                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `modelProviders`             | Declares which models are available and how to connect to them. Keys like `openai`, `anthropic`, `gemini` represent the API protocol. |
-| `modelProviders[].id`        | The model ID sent to the API (e.g. `qwen3.6-plus`, `gpt-4o`).                                                                         |
-| `modelProviders[].envKey`    | The name of the environment variable that holds your API key.                                                                         |
-| `modelProviders[].baseUrl`   | The API endpoint URL (required for non-default endpoints).                                                                            |
-| `env`                        | A fallback place to store API keys (lowest priority; prefer `.env` files or `export` for sensitive keys).                             |
-| `security.auth.selectedType` | The protocol to use on startup (`openai`, `anthropic`, `gemini`, `vertex-ai`).                                                        |
-| `model.name`                 | The default model to use when Qwen Code starts.                                                                                       |
+| Field                        | What it does                                                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modelProviders`             | Declares which models are available and how to connect to them. Keys like `openai`, `anthropic`, `gemini` represent the API protocol.                      |
+| `modelProviders[].id`        | The model ID sent to the API (e.g. `qwen3.6-plus`, `gpt-4o`).                                                                                              |
+| `modelProviders[].envKey`    | The name of the environment variable that holds your API key.                                                                                              |
+| `modelProviders[].baseUrl`   | The API endpoint URL (required for non-default endpoints).                                                                                                 |
+| `env`                        | A fallback place to store API keys (lowest priority; prefer `.env` files or `export` for sensitive keys).                                                  |
+| `security.auth.selectedType` | The protocol to use on startup (`openai`, `anthropic`, `gemini`, `vertex-ai`).                                                                             |
+| `model.name`                 | The default model to use when Qwen Code starts.                                                                                                            |
+| `modelPricing`               | Optional per-model pricing for `/stats model` cost estimation. Example: `{"qwen3-coder": {"inputPerMillionTokens": 0.30, "outputPerMillionTokens": 1.20}}` |
 
 **Step 3:** Start Qwen Code — your configuration takes effect automatically:
 

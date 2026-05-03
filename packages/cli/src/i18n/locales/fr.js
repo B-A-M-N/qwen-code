@@ -2096,4 +2096,9 @@ export default {
 
   "Set up Qwen Code's status line UI":
     "Configurer l'interface de la barre de statut de Qwen Code",
+  Cost: 'Cost',
+  Estimated: 'Estimated',
+  'Estimated cost:': 'Estimated cost:',
+  'No model usage data yet.': 'No model usage data yet.',
+  'No tool usage data yet.': 'No tool usage data yet.',
 };
