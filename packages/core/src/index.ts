@@ -299,6 +299,11 @@ export * from './utils/readManyFiles.js';
 export * from './utils/request-tokenizer/supportedImageFormats.js';
 export { TextTokenizer } from './utils/request-tokenizer/textTokenizer.js';
 export * from './utils/retry.js';
+export {
+  fetchWithTimeout,
+  isPrivateIp,
+  formatFetchErrorForUser,
+} from './utils/fetch.js';
 export * from './utils/ripgrepUtils.js';
 export {
   detectRuntime,
