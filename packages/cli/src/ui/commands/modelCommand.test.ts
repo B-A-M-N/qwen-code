@@ -480,7 +480,7 @@ describe('modelCommand', () => {
     it('should return error when baseUrl is not configured', async () => {
       const mockConfig = createMockConfig({
         model: 'test-model',
-        authType: 'USE_OPENAI' as AuthType,
+        authType: AuthType.USE_OPENAI,
         baseUrl: undefined,
       });
       mockContext.services.config = mockConfig as Config;
@@ -498,7 +498,7 @@ describe('modelCommand', () => {
     it('should return model list on success', async () => {
       const mockConfig = createMockConfig({
         model: 'test-model',
-        authType: 'USE_OPENAI' as AuthType,
+        authType: AuthType.USE_OPENAI,
         baseUrl: 'https://api.example.com/v1',
         apiKey: 'test-key',
       });
@@ -523,7 +523,7 @@ describe('modelCommand', () => {
     it('should handle Error instance throw from fetchModels', async () => {
       const mockConfig = createMockConfig({
         model: 'test-model',
-        authType: 'USE_OPENAI' as AuthType,
+        authType: AuthType.USE_OPENAI,
         baseUrl: 'https://api.example.com/v1',
         apiKey: 'test-key',
       });
@@ -543,7 +543,7 @@ describe('modelCommand', () => {
     it('should handle non-Error throw from fetchModels', async () => {
       const mockConfig = createMockConfig({
         model: 'test-model',
-        authType: 'USE_OPENAI' as AuthType,
+        authType: AuthType.USE_OPENAI,
         baseUrl: 'https://api.example.com/v1',
         apiKey: 'test-key',
       });
@@ -558,6 +558,84 @@ describe('modelCommand', () => {
         messageType: 'error',
         content: expect.stringContaining('Failed to fetch models:'),
       });
+    });
+
+    it('should return error for QWEN_OAUTH auth type', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: AuthType.QWEN_OAUTH,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('not supported for auth type'),
+      });
+    });
+
+    it('should return "no models found" when endpoint returns empty array', async () => {
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: AuthType.USE_OPENAI,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ data: [] }),
+      } as unknown as Response);
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'info',
+        content: expect.stringContaining('No models found'),
+      });
+    });
+  });
+
+  describe('fetchModels error handling', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should handle response.text() throwing in error path', async () => {
+      const mockResponse = {
+        ok: false,
+        status: 500,
+        text: vi.fn().mockRejectedValue(new Error('body stream locked')),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await expect(
+        fetchModels('https://api.example.com/v1', 'key'),
+      ).rejects.toThrow(
+        'Request failed (500): (unable to read error response)',
+      );
+    });
+
+    it('should throw on non-JSON 200 response', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected token')),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await expect(
+        fetchModels('https://api.example.com/v1', 'key'),
+      ).rejects.toThrow('Invalid JSON response from /models endpoint');
     });
   });
 });

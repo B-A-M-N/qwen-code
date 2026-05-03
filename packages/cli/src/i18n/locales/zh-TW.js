@@ -1675,4 +1675,14 @@ export default {
   'Not in plan mode. Use "/plan" to enter plan mode first.':
     '未處於計劃模式。請先使用 "/plan" 進入計劃模式。',
   "Set up Qwen Code's status line UI": '配置 Qwen Code 的狀態欄',
+  'List available models from the configured API endpoint':
+    '從已設定的 API 端點列出可用模型',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    '未設定 baseUrl。請設定 modelProviders 或設定 API 端點。',
+  'Failed to fetch models:': '取得模型失敗：',
+  'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.':
+    '不支援認證類型 {{authType}} 的模型列表。僅支援相容 OpenAI 的端點。',
+  'Request timed out. The endpoint may be slow or unreachable.':
+    '請求超時。端點可能回應緩慢或無法存取。',
+  'Request cancelled.': '請求已取消。',
 };

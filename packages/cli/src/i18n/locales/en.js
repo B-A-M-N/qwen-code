@@ -1215,6 +1215,11 @@ export default {
   'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
     'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
   'Failed to fetch models:': 'Failed to fetch models:',
+  'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.':
+    'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.',
+  'Request timed out. The endpoint may be slow or unreachable.':
+    'Request timed out. The endpoint may be slow or unreachable.',
+  'Request cancelled.': 'Request cancelled.',
   // ============================================================================
   // Commands - Clear
   // ============================================================================

@@ -13,6 +13,7 @@ import type {
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
 import { getPersistScopeForModelSelection } from '../../config/modelProvidersScope.js';
+import { AuthType } from '@qwen-code/qwen-code-core';
 
 export const modelCommand: SlashCommand = {
   name: 'model',
@@ -180,7 +181,22 @@ export const modelCommand: SlashCommand = {
           };
         }
 
-        const { baseUrl, apiKey } = contentGeneratorConfig;
+        const { baseUrl, apiKey, authType } = contentGeneratorConfig;
+
+        if (
+          authType &&
+          authType !== AuthType.USE_OPENAI &&
+          authType !== AuthType.USE_ANTHROPIC
+        ) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t(
+              'Model listing is not supported for auth type: {{authType}}. Only OpenAI-compatible endpoints are supported.',
+              { authType },
+            ),
+          };
+        }
 
         if (!baseUrl) {
           return {
@@ -198,16 +214,31 @@ export const modelCommand: SlashCommand = {
             apiKey,
             context.abortSignal,
           );
-          const output = models.join('\n');
+
+          if (models.length === 0) {
+            return {
+              type: 'message',
+              messageType: 'info',
+              content: t('No models found from the configured endpoint.'),
+            };
+          }
 
           return {
             type: 'message',
             messageType: 'info',
-            content: output,
+            content: models.join('\n'),
           };
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
+          let errorMessage: string;
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            const isTimeout = !context.abortSignal?.aborted;
+            errorMessage = isTimeout
+              ? t('Request timed out. The endpoint may be slow or unreachable.')
+              : t('Request cancelled.');
+          } else {
+            errorMessage =
+              error instanceof Error ? error.message : String(error);
+          }
           return {
             type: 'message',
             messageType: 'error',
@@ -275,7 +306,14 @@ export async function fetchModels(
       throw new Error(`Request failed (${response.status}): ${errorText}`);
     }
 
-    const body = (await response.json()) as unknown;
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error(
+        'Invalid JSON response from /models endpoint. Check that the baseUrl points to a valid OpenAI-compatible API.',
+      );
+    }
 
     // Extract the models array from various response shapes.
     // 1. Standard OpenAI: { data: [{ id: "..." }] }
