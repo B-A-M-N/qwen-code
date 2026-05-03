@@ -794,6 +794,11 @@ export default {
   'Authentication type not available.': '認証タイプが利用できません',
   'No models available for the current authentication type ({{authType}}).':
     '現在の認証タイプ({{authType}})で利用可能なモデルはありません',
+  'List available models from the configured API endpoint':
+    'List available models from the configured API endpoint',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+  'Failed to fetch models: ': 'Failed to fetch models: ',
   // Clear
   'Starting a new session, resetting chat, and clearing terminal.':
     '新しいセッションを開始し、チャットをリセットし、ターミナルをクリアしています',

@@ -1049,6 +1049,11 @@ export default {
   'Authentication type not available.': 'Tipo de autenticação não disponível.',
   'No models available for the current authentication type ({{authType}}).':
     'Nenhum modelo disponível para o tipo de autenticação atual ({{authType}}).',
+  'List available models from the configured API endpoint':
+    'List available models from the configured API endpoint',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+  'Failed to fetch models: ': 'Failed to fetch models: ',
 
   // ============================================================================
   // Commands - Clear

@@ -1150,6 +1150,11 @@ export default {
   'Authentication type not available.': '认证类型不可用',
   'No models available for the current authentication type ({{authType}}).':
     '当前认证类型 ({{authType}}) 没有可用的模型',
+  'List available models from the configured API endpoint':
+    'List available models from the configured API endpoint',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+  'Failed to fetch models: ': 'Failed to fetch models: ',
 
   // ============================================================================
   // Commands - Clear

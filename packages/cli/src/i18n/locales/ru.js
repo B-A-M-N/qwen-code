@@ -1048,6 +1048,11 @@ export default {
   'Authentication type not available.': 'Тип авторизации недоступен.',
   'No models available for the current authentication type ({{authType}}).':
     'Нет доступных моделей для текущего типа авторизации ({{authType}}).',
+  'List available models from the configured API endpoint':
+    'List available models from the configured API endpoint',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+  'Failed to fetch models: ': 'Failed to fetch models: ',
 
   // ============================================================================
   // Команды - Очистка
