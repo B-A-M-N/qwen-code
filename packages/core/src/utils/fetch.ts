@@ -74,7 +74,7 @@ export async function fetchWithTimeout(
     if (isNodeError(error) && error.code === 'ABORT_ERR') {
       throw new FetchError(`Request timed out after ${timeout}ms`, 'ETIMEDOUT');
     }
-    throw new FetchError(getErrorMessage(error));
+    throw new FetchError(getErrorMessage(error), getErrorCode(error));
   } finally {
     clearTimeout(timeoutId);
   }
