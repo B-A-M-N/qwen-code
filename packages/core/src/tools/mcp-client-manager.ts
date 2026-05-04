@@ -413,9 +413,14 @@ export class McpClientManager {
 
       await this.discoverMcpToolsForServer(serverName, this.cliConfig);
 
-      // Reset failure count on successful reconnection
-      this.consecutiveFailures.set(serverName, 0);
-      debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      // Only report success if the server is actually connected.
+      // discoverMcpToolsForServer() may return early (in-flight guard),
+      // in which case the server won't be connected.
+      const client = this.clients.get(serverName);
+      if (client && client.getStatus() === MCPServerStatus.CONNECTED) {
+        this.consecutiveFailures.set(serverName, 0);
+        debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      }
     } catch (error) {
       debugLogger.error(
         `Failed to reconnect to server '${serverName}': ${getErrorMessage(error)}`,
@@ -505,6 +510,8 @@ export class McpClientManager {
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
       this.consecutiveFailures.delete(serverName);
+      this.inFlightDiscoveries.delete(serverName);
+      this.isReconnecting.delete(serverName);
     }
 
     // Remove tools for this server from registry
