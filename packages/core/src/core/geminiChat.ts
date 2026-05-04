@@ -724,12 +724,20 @@ export class GeminiChat {
           if (isInvalidArgumentError(error.message)) return false;
         }
 
+        // isSchemaDepthError / isInvalidArgumentError above are independent
+        // safety nets not covered by classifyError — do not remove them.
         // Delegate to classifyError for all remaining cases. Explicitly accepted
         // retryable categories for Gemini streaming: 408 (timeout), 409 (transient
         // lock/contention only), 429 (rate limit), 5xx (server errors), network
         // transport errors. Deterministic errors (400, 401, 403, 404, 422) are
         // handled by classifyError and return retryable=false.
-        return classifyError(error).retryable;
+        const classification = classifyError(error);
+        if (classification.retryable) {
+          debugLogger.debug(
+            `geminiChat retrying: status=${classification.status ?? 'none'}, reason=${classification.reason}`,
+          );
+        }
+        return classification.retryable;
       },
       authType: this.config.getContentGeneratorConfig()?.authType,
       persistentMode: isUnattendedMode(),

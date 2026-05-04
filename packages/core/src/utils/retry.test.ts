@@ -1087,16 +1087,17 @@ describe('isRetryableNetworkError', () => {
     expect(isRetryableNetworkError(error)).toBe(true);
   });
 
-  it('should return true for ENOTFOUND', () => {
-    const error = new Error('Not found');
-    (error as NodeJS.ErrnoException).code = 'ENOTFOUND';
-    expect(isRetryableNetworkError(error)).toBe(true);
-  });
+  // DNS/route failures are treated as permanent misconfiguration, not
+  // transient provider instability. Retrying them just wastes time and
+  // hides the actual configuration problem (wrong hostname, firewall block).
+  it('does not retry permanent network misconfiguration errors', () => {
+    const enotfound = new Error('Not found');
+    (enotfound as NodeJS.ErrnoException).code = 'ENOTFOUND';
+    expect(isRetryableNetworkError(enotfound)).toBe(false);
 
-  it('should return true for EHOSTUNREACH', () => {
-    const error = new Error('Host unreachable');
-    (error as NodeJS.ErrnoException).code = 'EHOSTUNREACH';
-    expect(isRetryableNetworkError(error)).toBe(true);
+    const ehostunreach = new Error('Host unreachable');
+    (ehostunreach as NodeJS.ErrnoException).code = 'EHOSTUNREACH';
+    expect(isRetryableNetworkError(ehostunreach)).toBe(false);
   });
 
   it('should return true for EAI_AGAIN', () => {
@@ -1133,6 +1134,26 @@ describe('isRetryableNetworkError', () => {
   it('should return true for "etimedout" message (case-insensitive)', () => {
     const error = new Error('etimedout waiting for response');
     expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  // Word-boundary regression: substrings that contain the keyword but are
+  // not the actual phrase must NOT match. These guard against the previous
+  // `message.includes(...)` approach which had no boundary checks.
+  it('should return false for messages that merely contain retryable keywords as substrings', () => {
+    // "notanetwork error" — no word boundary before "network"
+    expect(isRetryableNetworkError(new Error('notanetwork error'))).toBe(false);
+    // "network erroring" — no word boundary after "error"
+    expect(isRetryableNetworkError(new Error('network erroring'))).toBe(false);
+    // "presocket closedapp" — no word boundaries around "socket closed"
+    expect(isRetryableNetworkError(new Error('presocket closedapp'))).toBe(
+      false,
+    );
+    // "stream endedness" — no word boundary after "ended"
+    expect(isRetryableNetworkError(new Error('stream endedness'))).toBe(false);
+    // "xeconnresetting" — no word boundaries around "econnreset"
+    expect(isRetryableNetworkError(new Error('xeconnresetting'))).toBe(false);
+    // "gettimedoutnow" — no word boundaries around "etimedout"
+    expect(isRetryableNetworkError(new Error('gettimedoutnow'))).toBe(false);
   });
 
   it('should return false for non-retryable errors', () => {
@@ -1219,6 +1240,26 @@ describe('classifyError', () => {
     expect(result.retryable).toBe(true);
   });
 
+  // Word-boundary regression: "lock" as a substring of a non-transient word
+  // must NOT trigger retryable classification.
+  it('should classify 409 with lock-as-substring message as non-retryable', () => {
+    // "blocked", "clock", "flock" all contain "lock" but are not transient.
+    const blocked: HttpError = Object.assign(new Error('Resource is blocked'), {
+      status: 409,
+    });
+    expect(classifyError(blocked).retryable).toBe(false);
+
+    const clock: HttpError = Object.assign(new Error('Clock skew detected'), {
+      status: 409,
+    });
+    expect(classifyError(clock).retryable).toBe(false);
+
+    const flock: HttpError = Object.assign(new Error('Flock timeout'), {
+      status: 409,
+    });
+    expect(classifyError(flock).retryable).toBe(false);
+  });
+
   // 'conflict' is NOT a transient keyword — it appears in the standard HTTP 409
   // reason phrase "Conflict", so matching it would make all 409s transient.
   it('should classify 409 with conflict-only message as non-retryable', () => {
@@ -1233,6 +1274,20 @@ describe('classifyError', () => {
   it('should classify 409 without transient message as non-retryable', () => {
     const error: HttpError = Object.assign(new Error('Validation failed'), {
       status: 409,
+    });
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic conflict');
+  });
+
+  // A deterministic 409 whose .cause mentions "lock" must NOT be classified
+  // as transient. isTransientConflict reads .message directly, not
+  // getErrorMessage() which concatenates .cause.
+  it('should classify 409 with lock in cause but not message as non-retryable', () => {
+    const cause = new Error('Lock file stale');
+    const error: HttpError = Object.assign(new Error('Duplicate resource'), {
+      status: 409,
+      cause,
     });
     const result = classifyError(error);
     expect(result.retryable).toBe(false);

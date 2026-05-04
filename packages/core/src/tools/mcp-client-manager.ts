@@ -218,7 +218,16 @@ export class McpClientManager {
           error,
         )}`,
       );
-      // Remove the failed client so a subsequent discovery can retry cleanly.
+      // Remove the failed client gracefully: disconnect first to avoid
+      // orphaning any child process that connect() may have spawned.
+      const failedClient = this.clients.get(serverName);
+      if (failedClient) {
+        try {
+          await failedClient.disconnect();
+        } catch {
+          // Best-effort cleanup; ignore disconnect errors.
+        }
+      }
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
     } finally {

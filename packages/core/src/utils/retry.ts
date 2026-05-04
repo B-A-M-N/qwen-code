@@ -387,9 +387,10 @@ const RETRYABLE_NETWORK_CODES = new Set([
   'ETIMEDOUT',
   'ESOCKETTIMEDOUT',
   'ECONNREFUSED',
-  'ENOTFOUND',
-  'EHOSTUNREACH',
   'EAI_AGAIN',
+  // ENOTFOUND and EHOSTUNREACH are intentionally excluded: DNS/routing
+  // failures are almost always permanent misconfigurations (wrong hostname,
+  // firewall block) and should fail fast rather than retry 7x (~76s).
 ]);
 
 /**
@@ -399,11 +400,15 @@ const RETRYABLE_NETWORK_CODES = new Set([
  * (the caller already knows status === 409 to invoke this function).
  */
 function isTransientConflict(error: Error | unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
+  // Read .message directly instead of getErrorMessage(), which concatenates
+  // .cause and could inject a transient keyword from a wrapped deterministic error.
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage.toLowerCase();
+  // Use word boundaries to avoid matching substrings like "blocked", "clock", "flock".
   // Only 'lock' and 'contention' are reliable transient signals.
   // 'conflict' is excluded because it appears in the standard HTTP 409 reason
   // phrase "Conflict", which would make all standards-compliant 409s transient.
-  return message.includes('lock') || message.includes('contention');
+  return /\block\b/.test(message) || /\bcontention\b/.test(message);
 }
 
 /**
@@ -419,15 +424,17 @@ export function isRetryableNetworkError(error: Error | unknown): boolean {
     }
   }
 
-  // Check error message patterns for network/socket issues
+  // Check error message patterns for network/socket issues.
+  // Use word-boundary regexes to avoid false positives from substrings
+  // (e.g. "notanetwork error", "econnresetting", "stream endedness").
   const message = getErrorMessage(error).toLowerCase();
   if (
-    message.includes('socket closed') ||
-    message.includes('stream ended') ||
-    message.includes('network error') ||
-    message.includes('connection reset') ||
-    message.includes('econnreset') ||
-    message.includes('etimedout')
+    /\bsocket closed\b/.test(message) ||
+    /\bstream ended\b/.test(message) ||
+    /\bnetwork error\b/.test(message) ||
+    /\bconnection reset\b/.test(message) ||
+    /\beconnreset\b/.test(message) ||
+    /\betimedout\b/.test(message)
   ) {
     return true;
   }
