@@ -100,7 +100,7 @@ describe('retryWithBackoff', () => {
     //    This ensures a 'catch' handler is present before the promise can reject.
     //    The result is a new promise that resolves when the assertion is met.
 
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 3',
     );
 
@@ -123,7 +123,7 @@ describe('retryWithBackoff', () => {
 
     // Expect it to fail with the error from the 7th attempt.
 
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -143,7 +143,7 @@ describe('retryWithBackoff', () => {
 
     // Expect it to fail with the error from the 7th attempt.
 
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
     );
     await vi.runAllTimersAsync();
@@ -194,7 +194,7 @@ describe('retryWithBackoff', () => {
 
     // Attach the rejection expectation *before* running timers
     const assertionPromise =
-      expect(promise).rejects.toThrow('Too Many Requests');
+      await expect(promise).rejects.toThrow('Too Many Requests');
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -263,7 +263,7 @@ describe('retryWithBackoff', () => {
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise1 = expect(promise1).rejects.toThrow();
+    const assertionPromise1 = await expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
 
@@ -278,7 +278,7 @@ describe('retryWithBackoff', () => {
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise2 = expect(promise2).rejects.toThrow();
+    const assertionPromise2 = await expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
 
@@ -505,31 +505,28 @@ describe('isTransientCapacityError', () => {
     expect(isTransientCapacityError(null)).toBe(false);
   });
 
-  it('should return true for 408 errors', () => {
+  // 408 and network errors are NOT transient capacity errors — they can indicate
+  // permanent config issues and should not trigger indefinite persistent retries.
+  // They remain retryable in standard mode via classifyError.
+  it('should return false for 408 errors', () => {
     const error = { status: 408 };
-    expect(isTransientCapacityError(error)).toBe(true);
+    expect(isTransientCapacityError(error)).toBe(false);
   });
 
-  it('should return true for ECONNRESET network errors', () => {
+  it('should return false for ECONNRESET network errors', () => {
     const error = new Error('Connection reset') as NodeJS.ErrnoException;
     error.code = 'ECONNRESET';
-    expect(isTransientCapacityError(error)).toBe(true);
+    expect(isTransientCapacityError(error)).toBe(false);
   });
 
-  it('should return true for ETIMEDOUT network errors', () => {
+  it('should return false for ETIMEDOUT network errors', () => {
     const error = new Error('Timed out') as NodeJS.ErrnoException;
     error.code = 'ETIMEDOUT';
-    expect(isTransientCapacityError(error)).toBe(true);
+    expect(isTransientCapacityError(error)).toBe(false);
   });
 
-  it('should return true for "socket closed" message', () => {
+  it('should return false for "socket closed" message', () => {
     const error = new Error('The socket closed unexpectedly');
-    expect(isTransientCapacityError(error)).toBe(true);
-  });
-
-  it('should return false for non-retryable network codes', () => {
-    const error = new Error('Permission denied') as NodeJS.ErrnoException;
-    error.code = 'EACCES';
     expect(isTransientCapacityError(error)).toBe(false);
   });
 });
@@ -661,7 +658,7 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: true,
     });
 
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Internal Server Error',
     );
     await vi.runAllTimersAsync();
@@ -754,7 +751,7 @@ describe('retryWithBackoff - persistent mode', () => {
     // Abort after the first retry starts waiting
     setTimeout(() => controller.abort(), 100);
 
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Retry aborted by signal',
     );
     await vi.runAllTimersAsync();
@@ -776,8 +773,7 @@ describe('retryWithBackoff - persistent mode', () => {
       shouldRetryOnError: () => false, // force fast-fail
     });
 
-    const assertionPromise =
-      expect(promise).rejects.toThrow('Rate limited');
+    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -824,8 +820,7 @@ describe('retryWithBackoff - persistent mode', () => {
       persistentMode: false,
     });
 
-    const assertionPromise =
-      expect(promise).rejects.toThrow('Rate limited');
+    const assertionPromise = await expect(promise).rejects.toThrow('Rate limited');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1206,13 +1201,6 @@ describe('classifyError', () => {
     expect(result.reason).toContain('Transient conflict');
   });
 
-  it('should classify 409 with conflict message as retryable', () => {
-    const error: HttpError = new Error('Conflict detected');
-    error.status = 409;
-    const result = classifyError(error);
-    expect(result.retryable).toBe(true);
-  });
-
   it('should classify 409 with contention message as retryable', () => {
     const error: HttpError = new Error('Resource contention');
     error.status = 409;
@@ -1220,8 +1208,21 @@ describe('classifyError', () => {
     expect(result.retryable).toBe(true);
   });
 
+  // 'conflict' is NOT a transient keyword — it appears in the standard HTTP 409
+  // reason phrase "Conflict", so matching it would make all 409s transient.
+  it('should classify 409 with conflict-only message as non-retryable', () => {
+    const error: HttpError = Object.assign(new Error('Duplicate resource'), {
+      status: 409,
+    });
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic conflict');
+  });
+
   it('should classify 409 without transient message as non-retryable', () => {
-    const error = { status: 409, message: 'Version conflict' };
+    const error: HttpError = Object.assign(new Error('Validation failed'), {
+      status: 409,
+    });
     const result = classifyError(error);
     expect(result.retryable).toBe(false);
     expect(result.reason).toContain('Deterministic conflict');
@@ -1333,8 +1334,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise =
-      expect(promise).rejects.toThrow('Request Timeout');
+    const assertionPromise = await expect(promise).rejects.toThrow('Request Timeout');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1380,7 +1380,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     });
 
     // Attach rejection handler before running timers to avoid unhandled rejection
-    const assertionPromise = expect(promise).rejects.toThrow(
+    const assertionPromise = await expect(promise).rejects.toThrow(
       'Resource already exists',
     );
     await vi.runAllTimersAsync();
@@ -1475,7 +1475,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     });
 
     const assertionPromise =
-      expect(promise).rejects.toThrow('Connection reset');
+      await expect(promise).rejects.toThrow('Connection reset');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1496,8 +1496,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise =
-      expect(promise).rejects.toThrow('Unauthorized');
+    const assertionPromise = await expect(promise).rejects.toThrow('Unauthorized');
     await vi.runAllTimersAsync();
     await assertionPromise;
 
@@ -1516,7 +1515,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       initialDelayMs: 10,
     });
 
-    const assertionPromise = expect(promise).rejects.toThrow('Not Found');
+    const assertionPromise = await expect(promise).rejects.toThrow('Not Found');
     await vi.runAllTimersAsync();
     await assertionPromise;
 

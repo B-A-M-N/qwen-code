@@ -726,7 +726,11 @@ export class GeminiChat {
         const status = getErrorStatus(error);
         if (status === 400) return false;
 
-        // Delegate to classifyError for all other cases (408, 409, 429, 5xx, network)
+        // Delegate to classifyError for all other cases. Explicitly accepted
+        // retryable categories for Gemini streaming: 408 (timeout), 409 (transient
+        // lock/contention only), 429 (rate limit), 5xx (server errors), network
+        // transport errors. Deterministic errors (400, 401, 403, 404, 422) are
+        // handled by classifyError and return retryable=false.
         return classifyError(error).retryable;
       },
       authType: this.config.getContentGeneratorConfig()?.authType,

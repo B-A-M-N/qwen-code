@@ -71,17 +71,18 @@ function defaultShouldRetry(error: Error | unknown): boolean {
 }
 
 /**
- * Determines if an error is a transient capacity error eligible for persistent retry.
- * Includes 429 (Rate Limit), 529 (Overloaded), 408 (Request Timeout), and
- * retryable network transport errors (ECONNRESET, ETIMEDOUT, etc.).
- * HTTP 500 is excluded because it may indicate a permanent server bug.
+ * Determines if an error is a transient capacity error eligible for persistent
+ * retry. Only 429 (Rate Limit) and 529 (Overloaded) qualify — these are
+ * unambiguous capacity signals safe to retry indefinitely in unattended mode.
+ *
+ * 408 and network errors are intentionally excluded: they can indicate permanent
+ * configuration issues (wrong endpoint, firewall block, proxy timeout) that would
+ * cause an unattended job to hang for hours instead of failing fast.
+ * These remain retryable in standard (non-persistent) retry mode via classifyError.
  */
 export function isTransientCapacityError(error: unknown): boolean {
   const status = getErrorStatus(error);
-  if (status === 429 || status === 529 || status === 408) {
-    return true;
-  }
-  if (isRetryableNetworkError(error)) {
+  if (status === 429 || status === 529) {
     return true;
   }
   return false;
@@ -395,11 +396,10 @@ const RETRYABLE_NETWORK_CODES = new Set([
  */
 function isTransientConflict(error: Error | unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
-  return (
-    message.includes('lock') ||
-    message.includes('conflict') ||
-    message.includes('contention')
-  );
+  // Only 'lock' and 'contention' are reliable transient signals.
+  // 'conflict' is excluded because it appears in the standard HTTP 409 reason
+  // phrase "Conflict", which would make all standards-compliant 409s transient.
+  return message.includes('lock') || message.includes('contention');
 }
 
 /**
