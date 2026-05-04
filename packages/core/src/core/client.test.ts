@@ -19,9 +19,11 @@ import { GeminiClient, SendMessageType } from './client.js';
 import { findCompressSplitPoint } from '../services/chatCompressionService.js';
 import {
   AuthType,
+  createContentGenerator,
   type ContentGenerator,
   type ContentGeneratorConfig,
 } from './contentGenerator.js';
+import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 import { type GeminiChat } from './geminiChat.js';
 import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../config/config.js';
@@ -91,6 +93,25 @@ vi.mock('./turn', async (importOriginal) => {
 
 vi.mock('../config/config.js');
 vi.mock('./prompts');
+vi.mock('../models/content-generator-config.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../models/content-generator-config.js')
+    >();
+  return {
+    ...actual,
+    buildAgentContentGeneratorConfig: vi
+      .fn()
+      .mockImplementation(actual.buildAgentContentGeneratorConfig),
+  };
+});
+vi.mock('./contentGenerator.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./contentGenerator.js')>();
+  return {
+    ...actual,
+    createContentGenerator: vi.fn(),
+  };
+});
 vi.mock('../utils/getFolderStructure', () => ({
   getFolderStructure: vi.fn().mockResolvedValue('Mock Folder Structure'),
 }));
@@ -152,6 +173,7 @@ vi.mock('../telemetry/uiTelemetry.js', () => ({
 vi.mock('../telemetry/loggers.js', () => ({
   logChatCompression: vi.fn(),
   logNextSpeakerCheck: vi.fn(),
+  logApiRequest: vi.fn(),
 }));
 
 // Mock RequestTokenizer to use simple character-based estimation
@@ -277,6 +299,12 @@ describe('Gemini Client (client.ts)', () => {
   beforeEach(async () => {
     vi.resetAllMocks();
     vi.mocked(uiTelemetryService.setLastPromptTokenCount).mockClear();
+
+    // Default: createContentGenerator rejects (simulates test env without auth).
+    // Individual tests can override with mockResolvedValue for success path.
+    vi.mocked(createContentGenerator).mockRejectedValue(
+      new Error('no auth in test env'),
+    );
 
     mockMemoryManager = {
       scheduleExtract: vi.fn().mockResolvedValue({
@@ -3156,11 +3184,13 @@ Other open files:
   });
 
   describe('generateContent with fast model', () => {
-    it('should resolve per-model config when the requested model differs from the main model', async () => {
+    it('should resolve per-model config and fall back when createContentGenerator fails', async () => {
       const contents = [{ role: 'user', parts: [{ text: 'hello' }] }];
       const abortSignal = new AbortController().signal;
 
-      // Set up a resolved model for the fast model
+      // Set up a resolved model for the fast model, but createContentGenerator
+      // will fail in the test env (no auth), so it falls back to the main
+      // content generator. Verify the resolution was attempted.
       const mockResolvedModel = {
         id: 'fast-model',
         authType: 'openai' as const,
@@ -3178,10 +3208,6 @@ Other open files:
         getResolvedModel,
       } as unknown as ModelsConfig);
 
-      // When the model differs from main, createContentGeneratorForModel is
-      // called which resolves the model config. Since createContentGenerator
-      // will fail in the test env (no auth), it falls back to the main
-      // content generator. Verify the resolution was attempted.
       await client.generateContent(
         contents,
         { temperature: 0.5 },
@@ -3204,6 +3230,69 @@ Other open files:
         }),
         expect.any(String),
       );
+    });
+
+    it('should use a dedicated content generator for the fast model on success', async () => {
+      const contents = [{ role: 'user', parts: [{ text: 'hello' }] }];
+      const abortSignal = new AbortController().signal;
+
+      // Create a mock dedicated content generator
+      const mockFastContentGenerator = {
+        generateContent: vi.fn().mockResolvedValue({
+          text: 'fast response',
+        }),
+      } as unknown as ContentGenerator;
+
+      // Set up a resolved model for the fast model
+      const mockResolvedModel = {
+        id: 'fast-model',
+        authType: 'openai' as const,
+        name: 'Fast Model',
+        baseUrl: 'https://fast-api.example.com',
+        envKey: 'FAST_API_KEY',
+        generationConfig: {
+          extra_body: { enable_thinking: false },
+          samplingParams: { temperature: 0.1 },
+        },
+        capabilities: {},
+      };
+
+      const getResolvedModel = vi.fn().mockReturnValue(mockResolvedModel);
+      vi.mocked(mockConfig.getModelsConfig).mockReturnValue({
+        getResolvedModel,
+      } as unknown as ModelsConfig);
+
+      // Override createContentGenerator to return our test double (success path)
+      vi.mocked(createContentGenerator).mockResolvedValue(
+        mockFastContentGenerator,
+      );
+
+      await client.generateContent(
+        contents,
+        { temperature: 0.5 },
+        abortSignal,
+        'fast-model',
+      );
+
+      // Verify buildAgentContentGeneratorConfig was called with correct args
+      expect(buildAgentContentGeneratorConfig).toHaveBeenCalledWith(
+        mockConfig,
+        'fast-model',
+        expect.objectContaining({
+          baseUrl: 'https://fast-api.example.com',
+        }),
+      );
+
+      // The dedicated fast content generator should be used
+      expect(mockFastContentGenerator.generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'fast-model',
+        }),
+        expect.any(String),
+      );
+
+      // The original main content generator should NOT have been called
+      expect(mockContentGenerator.generateContent).not.toHaveBeenCalled();
     });
 
     it('should use the main content generator when the requested model matches the main model', async () => {

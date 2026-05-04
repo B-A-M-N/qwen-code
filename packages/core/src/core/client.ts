@@ -46,6 +46,8 @@ import {
   COMPRESSION_TOKEN_THRESHOLD,
 } from '../services/chatCompressionService.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
+
+// Models
 import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 
 // Tools
@@ -1148,7 +1150,6 @@ export class GeminiClient {
         model !== mainModel
           ? await this.createContentGeneratorForModel(model)
           : this.getContentGeneratorOrFail();
-
       const apiCall = () => {
         currentAttemptModel = model;
 
@@ -1202,7 +1203,7 @@ export class GeminiClient {
    * the registry or when creating a dedicated generator fails (e.g. in test
    * environments without full auth setup).
    */
-   
+
   private async createContentGeneratorForModel(
     model: string,
   ): Promise<ContentGenerator> {
@@ -1231,9 +1232,11 @@ export class GeminiClient {
       );
 
       return await createContentGenerator(targetConfig, this.config);
-    } catch {
-      // Fallback to main content generator if resolution or creation fails
-      // (e.g. model not in registry, auth not available in test environments).
+    } catch (err: unknown) {
+      debugLogger.warn(
+        `Failed to create content generator for model "${model}", falling back to main generator.`,
+        err instanceof Error ? err.message : String(err),
+      );
       return this.getContentGeneratorOrFail();
     }
   }
