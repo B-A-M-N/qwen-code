@@ -1146,10 +1146,21 @@ export class GeminiClient {
       // extra_body, samplingParams, and reasoning are not inherited from the
       // main model's config.
       const mainModel = this.config.getModel() ?? model;
-      const contentGenerator =
-        model !== mainModel
-          ? await this.createContentGeneratorForModel(model)
-          : this.getContentGeneratorOrFail();
+      const isPerModel = model !== mainModel;
+
+      // Resolve the authType for retry logic. When using a per-model content
+      // generator (e.g. fast model side queries), the retry authType must match
+      // the target model's provider, not the main session's provider. This
+      // ensures QWEN_OAUTH quota detection checks against the right provider.
+      const retryAuthType = isPerModel
+        ? (this.createRetryAuthTypeForModel(model) ??
+          this.config.getContentGeneratorConfig()?.authType ??
+          AuthType.USE_OPENAI)
+        : this.config.getContentGeneratorConfig()?.authType;
+
+      const contentGenerator = isPerModel
+        ? await this.createContentGeneratorForModel(model)
+        : this.getContentGeneratorOrFail();
       const apiCall = () => {
         currentAttemptModel = model;
 
@@ -1163,7 +1174,7 @@ export class GeminiClient {
         );
       };
       const result = await retryWithBackoff(apiCall, {
-        authType: this.config.getContentGeneratorConfig()?.authType,
+        authType: retryAuthType,
         persistentMode: isUnattendedMode(),
         signal: abortSignal,
         heartbeatFn: (info) => {
@@ -1204,6 +1215,20 @@ export class GeminiClient {
    * environments without full auth setup).
    */
 
+  /**
+   * Resolve the authType for a given model without creating a full generator.
+   * Used by retry logic to ensure provider-specific checks (e.g. QWEN_OAUTH
+   * quota detection) reference the correct provider.
+   */
+  private createRetryAuthTypeForModel(model: string): string | undefined {
+    const authType =
+      this.config.getContentGeneratorConfig()?.authType ?? AuthType.USE_OPENAI;
+    const resolvedModel = this.config
+      .getModelsConfig()
+      .getResolvedModel(authType, model);
+    return resolvedModel?.authType;
+  }
+
   private async createContentGeneratorForModel(
     model: string,
   ): Promise<ContentGenerator> {
@@ -1216,6 +1241,9 @@ export class GeminiClient {
         .getResolvedModel(authType, model);
 
       if (!resolvedModel) {
+        debugLogger.debug(
+          `Model "${model}" not found in registry for authType "${authType}", falling back to main generator.`,
+        );
         return this.getContentGeneratorOrFail();
       }
 
