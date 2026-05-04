@@ -285,22 +285,22 @@ export async function fetchModels(
     ? { ...defaultHeaders, ...customHeaders }
     : { ...defaultHeaders };
 
-  // Deduplicate any existing authorization header (case-insensitive) before
-  // setting the Bearer token to avoid sending two Authorization headers when
-  // customHeaders contains a lowercase 'authorization' key.
-  const existingAuthKey = Object.keys(headers).find(
-    (k) => k.toLowerCase() === 'authorization',
-  );
-  if (existingAuthKey) {
-    delete headers[existingAuthKey];
-  }
-
   if (apiKey) {
+    // Deduplicate any existing authorization header (case-insensitive) before
+    // setting the Bearer token to avoid sending two Authorization headers when
+    // customHeaders contains a lowercase 'authorization' key.
+    const existingAuthKey = Object.keys(headers).find(
+      (k) => k.toLowerCase() === 'authorization',
+    );
+    if (existingAuthKey) {
+      delete headers[existingAuthKey];
+    }
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
   // Set up timeout and optional user abort signal
-  const fetchTimeout = timeout ?? DEFAULT_FETCH_TIMEOUT_MS;
+  const fetchTimeout =
+    timeout && timeout > 0 ? timeout : DEFAULT_FETCH_TIMEOUT_MS;
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), fetchTimeout);
 

@@ -656,6 +656,86 @@ describe('modelCommand', () => {
       // clearTimeout is called in the finally block after a successful request
       expect(clearTimeoutSpy).toHaveBeenCalled();
     });
+
+    it('should fall back to default timeout when timeout is 0', async () => {
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      // Mock fetch to hang until aborted
+      vi.spyOn(global, 'fetch').mockImplementation((_url, opts) => {
+        const signal = opts?.signal;
+        let rejectFn: (reason: unknown) => void;
+        const promise = new Promise<Response>((_resolve, reject) => {
+          rejectFn = reject;
+        });
+        signal?.addEventListener('abort', () => rejectFn!(signal.reason), {
+          once: true,
+        });
+        return promise;
+      });
+
+      // timeout: 0 should fall back to the default 15s, not abort immediately
+      const fetchPromise = fetchModels(
+        'https://api.example.com/v1',
+        'key',
+        undefined,
+        undefined,
+        undefined,
+        0,
+      );
+
+      // At 1 second it should NOT have timed out (would have with timeout: 0)
+      await vi.advanceTimersByTimeAsync(1_000);
+      let settled = false;
+      fetchPromise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      // At 15 seconds the default timeout fires
+      await vi.advanceTimersByTimeAsync(14_000);
+      await expect(fetchPromise).rejects.toThrow('The operation was aborted');
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    }, 10_000);
+
+    it('should preserve custom authorization header when apiKey is not set', async () => {
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(mockResponse as unknown as Response);
+
+      // No apiKey, but customHeaders has an authorization header
+      await fetchModels(
+        'https://api.example.com/v1',
+        undefined,
+        undefined,
+        undefined,
+        { Authorization: 'Bearer custom-token' },
+      );
+
+      // The custom Authorization header should be preserved
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer custom-token',
+          }),
+        }),
+      );
+    });
   });
 
   describe('list subcommand', () => {
