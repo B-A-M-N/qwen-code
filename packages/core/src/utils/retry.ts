@@ -57,17 +57,21 @@ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
 
 /**
  * Default predicate function to determine if a retry should be attempted.
- * Retries on transport/provider failures: 429, 408, transient 409, 5xx, and
- * network errors. Never retries deterministic request errors (400, 401, 403,
- * 404, 422).
+ * Retries on unambiguous transient capacity errors: 429 (Rate Limit) and 5xx
+ * (Server Errors). Does NOT retry on 408, 409, or network transport errors —
+ * those require caller-specific judgment (e.g. geminiChat uses classifyError
+ * directly for broader retry coverage including 408/409/network errors).
  *
- * Delegates to {@link classifyError} to avoid duplicating classification logic.
+ * Never retries deterministic request errors (400, 401, 403, 404, 422).
  *
  * @param error The error object.
  * @returns True if the error is a transient error, false otherwise.
  */
 function defaultShouldRetry(error: Error | unknown): boolean {
-  return classifyError(error).retryable;
+  const status = getErrorStatus(error);
+  if (status === 429) return true;
+  if (typeof status === 'number' && status >= 500 && status < 600) return true;
+  return false;
 }
 
 /**

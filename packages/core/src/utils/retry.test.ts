@@ -1297,8 +1297,11 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
   });
 
   // --- 408 Request Timeout ---
+  // Note: defaultShouldRetry only retries 429/5xx. 408 requires a custom
+  // shouldRetryOnError (e.g. classifyError) — these tests verify that
+  // callers using classifyError-based retry DO retry on 408.
 
-  it('should retry on 408 via defaultShouldRetry', async () => {
+  it('should retry on 408 when shouldRetryOnError uses classifyError', async () => {
     let attempts = 0;
     const mockFn = vi.fn(async () => {
       attempts++;
@@ -1313,6 +1316,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     await vi.runAllTimersAsync();
@@ -1322,7 +1326,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     expect(mockFn).toHaveBeenCalledTimes(2);
   });
 
-  it('should exhaust retries on persistent 408', async () => {
+  it('should exhaust retries on persistent 408 with classifyError', async () => {
     const mockFn = vi.fn(async () => {
       const error = new Error('Request Timeout') as any;
       error.status = 408;
@@ -1332,6 +1336,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 2,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     const assertionPromise = await expect(promise).rejects.toThrow('Request Timeout');
@@ -1343,7 +1348,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
 
   // --- 409 Conflict (transient vs deterministic) ---
 
-  it('should retry on 409 with lock contention message', async () => {
+  it('should retry on 409 with lock contention message when using classifyError', async () => {
     let attempts = 0;
     const mockFn = vi.fn(async () => {
       attempts++;
@@ -1358,6 +1363,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     await vi.runAllTimersAsync();
@@ -1377,6 +1383,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     // Attach rejection handler before running timers to avoid unhandled rejection
@@ -1391,7 +1398,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
 
   // --- Network errors ---
 
-  it('should retry on ECONNRESET via defaultShouldRetry', async () => {
+  it('should retry on ECONNRESET when shouldRetryOnError uses classifyError', async () => {
     let attempts = 0;
     const mockFn = vi.fn(async () => {
       attempts++;
@@ -1406,6 +1413,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     await vi.runAllTimersAsync();
@@ -1415,7 +1423,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     expect(mockFn).toHaveBeenCalledTimes(2);
   });
 
-  it('should retry on ETIMEDOUT via defaultShouldRetry', async () => {
+  it('should retry on ETIMEDOUT when shouldRetryOnError uses classifyError', async () => {
     let attempts = 0;
     const mockFn = vi.fn(async () => {
       attempts++;
@@ -1430,6 +1438,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     await vi.runAllTimersAsync();
@@ -1439,7 +1448,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     expect(mockFn).toHaveBeenCalledTimes(2);
   });
 
-  it('should retry on "socket closed" message via defaultShouldRetry', async () => {
+  it('should retry on "socket closed" message when using classifyError', async () => {
     let attempts = 0;
     const mockFn = vi.fn(async () => {
       attempts++;
@@ -1453,6 +1462,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 3,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     await vi.runAllTimersAsync();
@@ -1462,7 +1472,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     expect(mockFn).toHaveBeenCalledTimes(2);
   });
 
-  it('should exhaust retries on persistent network error', async () => {
+  it('should exhaust retries on persistent network error with classifyError', async () => {
     const mockFn = vi.fn(async () => {
       const error = new Error('Connection reset') as NodeJS.ErrnoException;
       error.code = 'ECONNRESET';
@@ -1472,6 +1482,7 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
     const promise = retryWithBackoff(mockFn, {
       maxAttempts: 2,
       initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
     const assertionPromise =

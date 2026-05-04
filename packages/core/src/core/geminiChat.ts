@@ -22,7 +22,6 @@ import {
   isUnattendedMode,
   classifyError,
 } from '../utils/retry.js';
-import { getErrorStatus } from '../utils/errors.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { parseAndFormatApiError } from '../utils/errorParsing.js';
 import { isRateLimitError, type RetryInfo } from '../utils/rateLimit.js';
@@ -717,16 +716,15 @@ export class GeminiChat {
       );
     const streamResponse = await retryWithBackoff(apiCall, {
       shouldRetryOnError: (error: unknown) => {
-        // Never retry deterministic client errors regardless of classification
+        // Independent safety-net guards not covered by classifyError:
+        // never retry schema-depth-limit or invalid-argument errors regardless
+        // of what classifyError returns.
         if (error instanceof Error) {
           if (isSchemaDepthError(error.message)) return false;
           if (isInvalidArgumentError(error.message)) return false;
         }
 
-        const status = getErrorStatus(error);
-        if (status === 400) return false;
-
-        // Delegate to classifyError for all other cases. Explicitly accepted
+        // Delegate to classifyError for all remaining cases. Explicitly accepted
         // retryable categories for Gemini streaming: 408 (timeout), 409 (transient
         // lock/contention only), 429 (rate limit), 5xx (server errors), network
         // transport errors. Deterministic errors (400, 401, 403, 404, 422) are
