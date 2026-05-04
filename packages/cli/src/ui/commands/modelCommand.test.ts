@@ -563,6 +563,99 @@ describe('modelCommand', () => {
         }),
       );
     });
+
+    it('should abort via internal timeout and call clearTimeout on completion', async () => {
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      // Suppress the unhandled rejection that vitest reports from fake timers
+      const unhandledHandler = () => {};
+      process.on('unhandledRejection', unhandledHandler);
+
+      // Mock fetch to hang on a pending promise; pass the abort signal
+      // through so the internal AbortController timeout propagates correctly.
+      vi.spyOn(global, 'fetch').mockImplementation((_url, opts) => {
+        const signal = opts?.signal;
+        let rejectFn: (reason: unknown) => void;
+        const promise = new Promise<Response>((_resolve, reject) => {
+          rejectFn = reject;
+        });
+        signal?.addEventListener('abort', () => rejectFn!(signal.reason), {
+          once: true,
+        });
+        return promise;
+      });
+
+      const fetchPromise = fetchModels('https://api.example.com/v1', 'key');
+
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(fetchPromise).rejects.toThrow('The operation was aborted');
+
+      // clearTimeout must have been called in the finally block
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      process.removeListener('unhandledRejection', unhandledHandler);
+      vi.useRealTimers();
+    }, 10_000);
+
+    it('should use custom timeout instead of the default 15s', async () => {
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      // Use a 5-second custom timeout
+      const fetchPromise = fetchModels(
+        'https://api.example.com/v1',
+        'key',
+        undefined,
+        undefined,
+        undefined,
+        5_000,
+      );
+
+      // At 4 seconds the request should NOT have timed out yet
+      await vi.advanceTimersByTimeAsync(4_000);
+      // The fetch promise should still be pending — verify it hasn't resolved/rejected
+      let settled = false;
+      fetchPromise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      // At 6 seconds total the custom timeout should fire
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(fetchPromise).rejects.toThrow('The operation was aborted');
+
+      // clearTimeout must have been called in the finally block
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('should call clearTimeout on successful fetch completion', async () => {
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      const mockResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      };
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        mockResponse as unknown as Response,
+      );
+
+      await fetchModels('https://api.example.com/v1', 'key');
+
+      // clearTimeout is called in the finally block after a successful request
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    });
   });
 
   describe('list subcommand', () => {
@@ -645,6 +738,61 @@ describe('modelCommand', () => {
         messageType: 'info',
         content: 'model-1\nmodel-2',
       });
+    });
+
+    it('should pass proxy, customHeaders, and timeout from config to fetchModels', async () => {
+      const mockDispatcher = { fake: true };
+      vi.mocked(getOrCreateSharedDispatcher).mockReturnValue(
+        mockDispatcher as never,
+      );
+
+      const mockConfig = createMockConfig({
+        model: 'test-model',
+        authType: AuthType.USE_OPENAI,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+        proxy: 'http://proxy:8080',
+        customHeaders: { 'X-Custom': 'value' },
+        timeout: 5_000,
+      });
+      mockContext.services.config = mockConfig as Config;
+
+      const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: 'model-1' }],
+        }),
+      } as unknown as Response);
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'info',
+        content: 'model-1',
+      });
+
+      // Verify proxy dispatcher was looked up
+      expect(getOrCreateSharedDispatcher).toHaveBeenCalledWith(
+        'http://proxy:8080',
+      );
+
+      // Verify fetch was called with dispatcher, custom headers, and timeout signal
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({
+          dispatcher: mockDispatcher,
+          headers: expect.objectContaining({
+            'X-Custom': 'value',
+            Authorization: 'Bearer test-key',
+          }),
+          signal: expect.any(AbortSignal),
+        }),
+      );
+
+      vi.mocked(getOrCreateSharedDispatcher).mockReturnValue(
+        undefined as never,
+      );
     });
 
     it('should handle Error instance throw from fetchModels', async () => {
