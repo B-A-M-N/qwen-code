@@ -227,6 +227,102 @@ describe('McpClientManager', () => {
     expect(secondClient.disconnect).toHaveBeenCalledOnce();
   });
 
+  it('should not spawn duplicate clients when discoverMcpToolsForServer is called concurrently for the same server', async () => {
+    // Simulate a slow connect to create a window where a second call could race.
+    let connectCallCount = 0;
+    const connectDelays: Array<(value: void) => void> = [];
+
+    const mockedClient = {
+      connect: vi.fn().mockImplementation(() => {
+        connectCallCount++;
+        return new Promise<void>((resolve) => {
+          connectDelays.push(resolve);
+        });
+      }),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn(),
+    };
+
+    vi.mocked(McpClient).mockReturnValue(mockedClient as unknown as McpClient);
+
+    const mockConfig = {
+      isTrustedFolder: () => true,
+      getMcpServers: () => ({ 'test-server': {} }),
+      getMcpServerCommand: () => undefined,
+      getPromptRegistry: () => ({}) as PromptRegistry,
+      getWorkspaceContext: () => ({}) as WorkspaceContext,
+      getDebugMode: () => false,
+    } as unknown as Config;
+    const manager = new McpClientManager(mockConfig, {} as ToolRegistry);
+
+    // Fire two concurrent discoveries for the same server.
+    const p1 = manager.discoverMcpToolsForServer(
+      'test-server',
+      {} as unknown as Config,
+    );
+    const p2 = manager.discoverMcpToolsForServer(
+      'test-server',
+      {} as unknown as Config,
+    );
+
+    // Let both settle (the second should have been a no-op).
+    // Resolve the single in-flight connect.
+    connectDelays[0]?.();
+    await p1;
+    await p2;
+
+    // Only one connect call should have been made — the concurrent second
+    // call must have bailed out early.
+    expect(connectCallCount).toBe(1);
+    expect(mockedClient.connect).toHaveBeenCalledOnce();
+    expect(mockedClient.discover).toHaveBeenCalledOnce();
+  });
+
+  it('should clean up in-flight tracking after discovery completes', async () => {
+    const mockedClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn(),
+    };
+
+    vi.mocked(McpClient).mockReturnValue(mockedClient as unknown as McpClient);
+
+    const mockConfig = {
+      isTrustedFolder: () => true,
+      getMcpServers: () => ({ 'test-server': {} }),
+      getMcpServerCommand: () => undefined,
+      getPromptRegistry: () => ({}) as PromptRegistry,
+      getWorkspaceContext: () => ({}) as WorkspaceContext,
+      getDebugMode: () => false,
+    } as unknown as Config;
+    const manager = new McpClientManager(mockConfig, {} as ToolRegistry);
+
+    await manager.discoverMcpToolsForServer(
+      'test-server',
+      {} as unknown as Config,
+    );
+
+    // After completion, a second call should proceed (not be skipped).
+    const secondClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn(),
+    };
+    vi.mocked(McpClient).mockReturnValue(secondClient as unknown as McpClient);
+
+    await manager.discoverMcpToolsForServer(
+      'test-server',
+      {} as unknown as Config,
+    );
+
+    // The second call should have created a new client and connected.
+    expect(secondClient.connect).toHaveBeenCalledOnce();
+    expect(secondClient.discover).toHaveBeenCalledOnce();
+  });
+
   it('should no-op when discovering an unknown server', async () => {
     const mockedMcpClient = {
       connect: vi.fn(),

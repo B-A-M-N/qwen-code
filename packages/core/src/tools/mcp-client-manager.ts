@@ -58,6 +58,7 @@ export class McpClientManager {
   private healthCheckTimers: Map<string, NodeJS.Timeout> = new Map();
   private consecutiveFailures: Map<string, number> = new Map();
   private isReconnecting: Map<string, boolean> = new Map();
+  private inFlightDiscoveries: Set<string> = new Set();
 
   constructor(
     config: Config,
@@ -157,6 +158,16 @@ export class McpClientManager {
       return;
     }
 
+    // Prevent concurrent re-discovery of the same server to avoid spawning
+    // duplicate MCP child processes. If a discovery/reconnection is already
+    // in progress for this server, bail out early.
+    if (this.inFlightDiscoveries.has(serverName)) {
+      debugLogger.debug(
+        `Discovery already in flight for server '${serverName}', skipping.`,
+      );
+      return;
+    }
+
     // Ensure we don't leak an existing connection for this server.
     const existingClient = this.clients.get(serverName);
     if (existingClient) {
@@ -168,9 +179,16 @@ export class McpClientManager {
         );
       } finally {
         this.clients.delete(serverName);
+        this.stopHealthCheck(serverName);
         this.eventEmitter?.emit('mcp-client-update', this.clients);
       }
     }
+
+    // Track this discovery in-flight to prevent races.
+    const discoveryDone = () => {
+      this.inFlightDiscoveries.delete(serverName);
+    };
+    this.inFlightDiscoveries.add(serverName);
 
     // For SDK MCP servers, pass the sendSdkMcpMessage callback.
     const sdkCallback = isSdkMcpServerConfig(serverConfig)
@@ -202,7 +220,11 @@ export class McpClientManager {
           error,
         )}`,
       );
+      // Remove the failed client so a subsequent discovery can retry cleanly.
+      this.clients.delete(serverName);
+      this.stopHealthCheck(serverName);
     } finally {
+      discoveryDone();
       this.eventEmitter?.emit('mcp-client-update', this.clients);
     }
   }
@@ -231,6 +253,7 @@ export class McpClientManager {
     this.clients.clear();
     this.consecutiveFailures.clear();
     this.isReconnecting.clear();
+    this.inFlightDiscoveries.clear();
   }
 
   /**
