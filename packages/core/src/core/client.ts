@@ -150,8 +150,11 @@ async function resolveAutoMemoryWithDeadline(
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<RelevantAutoMemoryPromptResult>((resolve) => {
     timer = setTimeout(() => {
-      onDeadline();
-      resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT);
+      try {
+        onDeadline();
+      } finally {
+        resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT);
+      }
     }, 2_500);
   });
 
@@ -171,7 +174,7 @@ export class GeminiClient {
   private lastPromptId: string | undefined = undefined;
   private lastSentIdeContext: IdeContext | undefined;
   private forceFullIdeContext = true;
-  private _pendingRecallAbortController: AbortController | undefined;
+  private pendingRecallAbortController: AbortController | undefined;
 
   /**
    * Cache of per-model ContentGenerators keyed by model ID.
@@ -759,7 +762,7 @@ export class GeminiClient {
             );
             return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
           });
-        this._pendingRecallAbortController = recallAbortController;
+        this.pendingRecallAbortController = recallAbortController;
       }
 
       // record user/cron message for session management
@@ -807,6 +810,8 @@ export class GeminiClient {
         this.config.getMaxSessionTurns() > 0 &&
         this.sessionTurnCount > this.config.getMaxSessionTurns()
       ) {
+        this.pendingRecallAbortController?.abort();
+        this.pendingRecallAbortController = undefined;
         yield { type: GeminiEventType.MaxSessionTurns };
         return new Turn(this.getChat(), prompt_id);
       }
@@ -815,6 +820,8 @@ export class GeminiClient {
     // Ensure turns never exceeds MAX_TURNS to prevent infinite loops
     const boundedTurns = Math.min(turns, MAX_TURNS);
     if (!boundedTurns) {
+      this.pendingRecallAbortController?.abort();
+      this.pendingRecallAbortController = undefined;
       return new Turn(this.getChat(), prompt_id);
     }
 
@@ -830,6 +837,8 @@ export class GeminiClient {
     if (sessionTokenLimit > 0) {
       const lastPromptTokenCount = uiTelemetryService.getLastPromptTokenCount();
       if (lastPromptTokenCount > sessionTokenLimit) {
+        this.pendingRecallAbortController?.abort();
+        this.pendingRecallAbortController = undefined;
         yield {
           type: GeminiEventType.SessionTokenLimitExceeded,
           value: {
@@ -880,6 +889,8 @@ export class GeminiClient {
           `Arena control signal received: ${controlSignal.type} - ${controlSignal.reason}`,
         );
         await arenaAgentClient.reportCancelled();
+        this.pendingRecallAbortController?.abort();
+        this.pendingRecallAbortController = undefined;
         return new Turn(this.getChat(), prompt_id);
       }
     }
@@ -896,8 +907,8 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       const systemReminders = [];
-      const recallAbortController = this._pendingRecallAbortController;
-      this._pendingRecallAbortController = undefined;
+      const recallAbortController = this.pendingRecallAbortController;
+      this.pendingRecallAbortController = undefined;
       const relevantAutoMemory = await resolveAutoMemoryWithDeadline(
         relevantAutoMemoryPromise,
         () => recallAbortController?.abort(),

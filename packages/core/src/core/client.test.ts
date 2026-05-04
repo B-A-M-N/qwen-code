@@ -1880,6 +1880,39 @@ hello
       vi.mocked(mockConfig.getManagedAutoMemoryEnabled).mockReturnValue(true);
     });
 
+    it('should proceed normally when recall rejects', async () => {
+      // Simulate a recall that throws — the .catch() handler should swallow
+      // the error and the main request should complete without memory content
+      mockMemoryManager.recall.mockRejectedValue(new Error('recall failed'));
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      const stream = client.sendMessageStream(
+        [{ text: 'Quick question' }],
+        new AbortController().signal,
+        'prompt-id-recall-fail',
+      );
+      for await (const _ of stream) {
+        // consume stream
+      }
+
+      // The main request should have been called without any memory content
+      expect(mockTurnRunFn).toHaveBeenCalledWith(
+        'test-model',
+        ['Quick question'],
+        expect.any(AbortSignal),
+      );
+    });
+
     it('should run managed auto-memory extraction after a completed user query', async () => {
       mockMemoryManager.scheduleExtract.mockResolvedValue({
         touchedTopics: ['user'],

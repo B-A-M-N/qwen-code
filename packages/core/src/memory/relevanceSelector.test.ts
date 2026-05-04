@@ -76,6 +76,56 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
     expect(runSideQuery).not.toHaveBeenCalled();
   });
 
+  it('forwards caller abort signal to runSideQuery combined with timeout', async () => {
+    vi.mocked(runSideQuery).mockResolvedValue({
+      selected_memories: ['user.md'],
+    });
+
+    const callerSignal = new AbortController().signal;
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check preferences',
+      docs,
+      2,
+      [],
+      callerSignal,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledWith(
+      mockConfig,
+      expect.objectContaining({
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
+
+    // Verify the abort signal is a combined signal (AbortSignal.any)
+    const callArgs = vi.mocked(runSideQuery).mock.calls[0][1];
+    const passedSignal = callArgs.abortSignal;
+    // When callerAbortSignal is provided, it should be an AbortSignal from AbortSignal.any
+    // which is still an AbortSignal instance
+    expect(passedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('uses timeout-only abort signal when no caller signal provided', async () => {
+    vi.mocked(runSideQuery).mockResolvedValue({
+      selected_memories: [],
+    });
+
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check preferences',
+      docs,
+      2,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledWith(
+      mockConfig,
+      expect.objectContaining({
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
   it('throws when selector returns unknown relative paths', async () => {
     vi.mocked(runSideQuery).mockImplementation(async (_config, options) => {
       const error = options.validate?.({

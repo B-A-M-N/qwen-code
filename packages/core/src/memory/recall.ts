@@ -197,6 +197,7 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
         docs,
         limit,
         options.recentTools ?? [],
+        options.abortSignal,
       );
       const strategy: RelevantAutoMemoryPromptResult['strategy'] =
         selectedDocs.length > 0 ? 'model' : 'none';
