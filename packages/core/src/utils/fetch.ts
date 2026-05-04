@@ -10,11 +10,17 @@ import { URL } from 'node:url';
 const PRIVATE_IP_RANGES = [
   /^10\./,
   /^127\./,
+  /^169\.254\./, // AWS IMDS and link-local
   /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
   /^192\.168\./,
-  /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
+  /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./, // CGNAT (RFC 6598)
+  /^0\./, // 0.0.0.0/8 — can reach localhost on Linux
+  /^::1$/, // IPv6 loopback
+  /^fc00:/, // IPv6 unique local
+  /^fe80:/, // IPv6 link-local
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x (Node normalizes to hex, e.g. ::ffff:c0a8:101)
+  // We check the raw hostname for the ::ffff: prefix and also test the original URL
+  // via isPrivateIp which uses the original string before Node normalization
 ];
 
 const TLS_ERROR_CODES = new Set([
@@ -49,8 +55,22 @@ export class FetchError extends Error {
 
 export function isPrivateIp(url: string): boolean {
   try {
-    const hostname = new URL(url).hostname;
-    return PRIVATE_IP_RANGES.some((range) => range.test(hostname));
+    // Node 20+ returns IPv6 hostnames with brackets (e.g. '[::1]').
+    // Strip them before testing against IP range patterns.
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    if (PRIVATE_IP_RANGES.some((range) => range.test(hostname))) {
+      return true;
+    }
+    // IPv4-mapped IPv6: Node normalizes ::ffff:192.168.1.1 to ::ffff:c0a8:101 (hex).
+    // Check the original URL string for ::ffff: followed by a dotted-quad pattern.
+    const rawHostname = url.match(/:\/\/([^/]+)/)?.[1] ?? '';
+    const bareHostname = rawHostname.replace(/^\[|\]$/g, '');
+    if (/^::ffff:\d+\.\d+\.\d+\.\d+$/.test(bareHostname)) {
+      // Extract the IPv4 part and check if it's private
+      const ipv4 = bareHostname.replace(/^::ffff:/, '');
+      return PRIVATE_IP_RANGES.some((range) => range.test(ipv4));
+    }
+    return false;
   } catch (_e) {
     return false;
   }
@@ -60,6 +80,7 @@ export async function fetchWithTimeout(
   url: string,
   timeout: number,
   headers?: Record<string, string>,
+  redirect: RequestRedirect = 'error',
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -68,6 +89,7 @@ export async function fetchWithTimeout(
     const response = await fetch(url, {
       signal: controller.signal,
       headers,
+      redirect,
     });
     return response;
   } catch (error) {

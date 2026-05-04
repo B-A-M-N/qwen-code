@@ -19,6 +19,7 @@ import {
   formatFetchErrorForUser,
   createDebugLogger,
 } from '@qwen-code/qwen-code-core';
+import { escapeAnsiCtrlCodes } from '../../ui/utils/textUtils.js';
 
 const debugLogger = createDebugLogger('MODEL_COMMAND');
 const FETCH_TIMEOUT_MS = 30_000;
@@ -218,18 +219,23 @@ export const modelCommand: SlashCommand = {
               content: t('No models found from the configured endpoint.'),
             };
           }
-          const output = models.join('\n');
+          // Sanitize model IDs to prevent terminal escape sequence injection
+          const output = escapeAnsiCtrlCodes(models.join('\n'));
           return {
             type: 'message',
             messageType: 'info',
             content: output,
           };
         } catch (error) {
-          const errorMessage = formatFetchErrorForUser(error, { url: baseUrl });
+          const errorMessage = formatFetchErrorForUser(error, {
+            url: `${baseUrl.replace(/\/+$/, '')}/models`,
+          });
           return {
             type: 'message',
             messageType: 'error',
-            content: t('Failed to fetch models: ') + errorMessage,
+            content: t('Failed to fetch models: {{error}}', {
+              error: errorMessage,
+            }),
           };
         }
       },
@@ -259,17 +265,20 @@ export async function fetchModels(
     throw new Error('baseUrl must use HTTPS');
   }
 
-  // SSRF protection: block private IPs and localhost
-  const hostname = parsed.hostname;
-  if (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1'
-  ) {
-    throw new Error('baseUrl resolves to a private IP address (SSRF check)');
+  // SSRF protection: block private IPs and localhost.
+  // isPrivateIp() handles IPv4, IPv6 (including bracketed), and IPv4-mapped IPv6.
+  // The explicit localhost check covers the hostname string 'localhost' which
+  // isPrivateIp would miss (it's not an IP literal).
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (hostname === 'localhost') {
+    throw new Error(
+      'baseUrl points to a private or reserved IP address (SSRF check)',
+    );
   }
   if (isPrivateIp(baseUrl)) {
-    throw new Error('baseUrl resolves to a private IP address (SSRF check)');
+    throw new Error(
+      'baseUrl points to a private or reserved IP address (SSRF check)',
+    );
   }
 
   // Normalize baseUrl to avoid double slash (e.g., "https://api.openai.com/v1/")
@@ -284,14 +293,21 @@ export async function fetchModels(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  debugLogger.debug('Fetching models from', url);
+  // Sanitize URL for debug logging — strip embedded credentials
+  const logSafeUrl = new URL(url);
+  logSafeUrl.username = '';
+  logSafeUrl.password = '';
+  debugLogger.debug('Fetching models from', logSafeUrl.toString());
 
   const startTime = Date.now();
   let response: Response;
   try {
-    response = await fetchWithTimeout(url, FETCH_TIMEOUT_MS, headers);
+    response = await fetchWithTimeout(url, FETCH_TIMEOUT_MS, headers, 'error');
   } catch (error) {
-    debugLogger.debug('Models request failed', { error, url });
+    debugLogger.debug('Models request failed', {
+      error,
+      url: logSafeUrl.toString(),
+    });
     throw error;
   }
 
@@ -307,7 +323,9 @@ export async function fetchModels(
     const sanitized = apiKey
       ? truncated.replaceAll(apiKey, '[REDACTED]')
       : truncated;
-    throw new Error(`Request failed (${response.status}): ${sanitized}`);
+    throw new Error(
+      `Request failed (HTTP_${response.status}): ${sanitized}`,
+    );
   }
 
   const data = (await response.json()) as {

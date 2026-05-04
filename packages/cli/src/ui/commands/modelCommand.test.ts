@@ -283,7 +283,7 @@ describe('fetchModels', () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
 
     await expect(fetchModels('https://api.example.com/v1/')).rejects.toThrow(
-      'Request failed (401)',
+      'Request failed (HTTP_401)',
     );
   });
 
@@ -373,13 +373,39 @@ describe('fetchModels', () => {
 
   it('should throw on private IP address (SSRF check)', async () => {
     await expect(fetchModels('https://192.168.1.1/api/')).rejects.toThrow(
-      'private IP',
+      'private or reserved IP address',
     );
   });
 
   it('should throw on localhost (SSRF check)', async () => {
     await expect(fetchModels('https://localhost:8080/api/')).rejects.toThrow(
-      'SSRF check',
+      'private or reserved IP address',
+    );
+  });
+
+  it('should throw on IPv6 loopback [::1] (SSRF check)', async () => {
+    await expect(fetchModels('https://[::1]/api/')).rejects.toThrow(
+      'private or reserved IP address',
+    );
+  });
+
+  it('should throw on IPv4-mapped IPv6 (SSRF check)', async () => {
+    // Node normalizes ::ffff:192.168.1.1 to ::ffff:c0a8:101 — verify the
+    // raw URL string check catches this before normalization
+    await expect(
+      fetchModels('https://[::ffff:10.0.0.1]/api/'),
+    ).rejects.toThrow('private or reserved IP address');
+  });
+
+  it('should throw on AWS IMDS address (SSRF check)', async () => {
+    await expect(
+      fetchModels('https://169.254.169.254/latest/meta-data/'),
+    ).rejects.toThrow('private or reserved IP address');
+  });
+
+  it('should throw on CGNAT address (SSRF check)', async () => {
+    await expect(fetchModels('https://100.64.0.1/api/')).rejects.toThrow(
+      'private or reserved IP address',
     );
   });
 });
@@ -501,5 +527,56 @@ describe('/model list subcommand', () => {
       messageType: 'error',
       content: expect.stringContaining('Failed to fetch models'),
     });
+  });
+
+  it('should use parameterized i18n template for fetch errors', async () => {
+    const mockConfig = createMockConfig({
+      model: 'test-model',
+      authType: AuthType.USE_OPENAI,
+      baseUrl: 'https://api.example.com/v1/',
+    });
+    mockContext.services.config = mockConfig as Config;
+
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const result = await modelCommand.subCommands![0].action!(mockContext, '');
+
+    expect(result).toEqual({
+      type: 'message',
+      messageType: 'error',
+      content: expect.stringContaining('Failed to fetch models:'),
+    });
+    // Verify the error message contains the actual error detail
+    expect((result as { content: string }).content).toContain('ECONNREFUSED');
+  });
+
+  it('should sanitize ANSI escape sequences from model IDs', async () => {
+    const mockConfig = createMockConfig({
+      model: 'test-model',
+      authType: AuthType.USE_OPENAI,
+      baseUrl: 'https://api.example.com/v1/',
+    });
+    mockContext.services.config = mockConfig as Config;
+
+    const mockResponse = {
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          { id: 'clean-model' },
+          { id: '\x1b[31mred-model\x1b[0m' },
+        ],
+      }),
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
+
+    const result = await modelCommand.subCommands![0].action!(mockContext, '');
+    const content = (result as { content: string }).content;
+
+    // ANSI sequences should be stripped
+    expect(content).not.toContain('\x1b[');
+    expect(content).toContain('clean-model');
+    expect(content).toContain('red-model');
   });
 });

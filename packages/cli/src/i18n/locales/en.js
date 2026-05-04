@@ -1213,7 +1213,9 @@ export default {
     'List available models from the configured API endpoint',
   'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
     'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
-  'Failed to fetch models: ': 'Failed to fetch models: ',
+  'Failed to fetch models: {{error}}': 'Failed to fetch models: {{error}}',
+  'No models found from the configured endpoint.':
+    'No models found from the configured endpoint.',
 
   // ============================================================================
   // Commands - Clear
