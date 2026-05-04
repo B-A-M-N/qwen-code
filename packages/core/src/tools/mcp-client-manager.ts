@@ -410,21 +410,16 @@ export class McpClientManager {
         setTimeout(resolve, this.healthConfig.reconnectDelayMs),
       );
 
-      // If a discovery is already in flight for this server (e.g. triggered
-      // by another health check or user action), skip to avoid duplicate work.
-      // The in-flight discovery will handle failure counting.
-      if (this.inFlightDiscoveries.has(serverName)) {
-        debugLogger.debug(
-          `Discovery already in flight for '${serverName}', skipping reconnect.`,
-        );
-        return;
-      }
-
       await this.discoverMcpToolsForServer(serverName, this.cliConfig);
 
-      // Reset failure count on successful reconnection
-      this.consecutiveFailures.set(serverName, 0);
-      debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      // Only report success if the server is actually connected.
+      // discoverMcpToolsForServer() may return early (in-flight guard),
+      // in which case the server won't be connected.
+      const client = this.clients.get(serverName);
+      if (client && client.getStatus() === MCPServerStatus.CONNECTED) {
+        this.consecutiveFailures.set(serverName, 0);
+        debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      }
     } catch (error) {
       debugLogger.error(
         `Failed to reconnect to server '${serverName}': ${getErrorMessage(error)}`,
@@ -514,6 +509,8 @@ export class McpClientManager {
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
       this.consecutiveFailures.delete(serverName);
+      this.inFlightDiscoveries.delete(serverName);
+      this.isReconnecting.delete(serverName);
     }
 
     // Remove tools for this server from registry
