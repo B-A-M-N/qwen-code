@@ -3356,6 +3356,10 @@ Other open files:
         }),
         expect.any(String),
       );
+
+      // buildAgentContentGeneratorConfig must NOT be called when the model is
+      // not in the registry — the fallback path skips config construction.
+      expect(buildAgentContentGeneratorConfig).not.toHaveBeenCalled();
     });
 
     it('should use fast model authType for retry, not main model authType', async () => {
