@@ -1874,6 +1874,42 @@ describe('GeminiChat', async () => {
         ).toBe(true);
       });
 
+      it('should NOT retry on invalid argument errors (isInvalidArgumentError guard)', async () => {
+        vi.useFakeTimers();
+        try {
+          const invalidArgError = new ApiError({
+            message:
+              'Request contains an invalid argument: schema validation failed',
+            status: 400,
+          });
+
+          vi.mocked(
+            mockContentGenerator.generateContentStream,
+          ).mockRejectedValue(invalidArgError);
+
+          const stream = await chat.sendMessageStream(
+            'test-model',
+            { message: 'test' },
+            'prompt-id-invalid-arg',
+          );
+
+          await expect(
+            (async () => {
+              for await (const _ of stream) {
+                void 0;
+              }
+            })(),
+          ).rejects.toThrow(invalidArgError);
+
+          // Should only be called once (no retry)
+          expect(
+            mockContentGenerator.generateContentStream,
+          ).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       afterEach(() => {
         // Reset to default behavior
         mockRetryWithBackoff.mockImplementation(async (apiCall) => apiCall());

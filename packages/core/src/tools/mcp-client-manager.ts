@@ -218,6 +218,16 @@ export class McpClientManager {
           error,
         )}`,
       );
+      // Disconnect the failed client (may have spawned a child process)
+      // before removing it from the map, to avoid orphaned processes.
+      const failedClient = this.clients.get(serverName);
+      if (failedClient) {
+        try {
+          await failedClient.disconnect();
+        } catch {
+          // Ignore disconnect errors — the client may never have connected
+        }
+      }
       // Remove the failed client so a subsequent discovery can retry cleanly.
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
@@ -409,6 +419,15 @@ export class McpClientManager {
       await new Promise((resolve) =>
         setTimeout(resolve, this.healthConfig.reconnectDelayMs),
       );
+
+      // Guard: another discovery may have completed during the delay window
+      // and cleared inFlightDiscoveries. Check before proceeding.
+      if (this.inFlightDiscoveries.has(serverName)) {
+        debugLogger.debug(
+          `Reconnect skipped: discovery already in flight for '${serverName}'`,
+        );
+        return;
+      }
 
       await this.discoverMcpToolsForServer(serverName, this.cliConfig);
 

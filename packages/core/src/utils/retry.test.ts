@@ -196,8 +196,8 @@ describe('retryWithBackoff', () => {
     });
 
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
     const assertionPromise =
+      // eslint-disable-next-line vitest/valid-expect
       expect(promise).rejects.toThrow('Too Many Requests');
 
     // Run timers to trigger retries and eventual rejection
@@ -221,6 +221,51 @@ describe('retryWithBackoff', () => {
       initialDelayMs: 10,
     });
     await expect(promise).rejects.toThrow('Bad Request');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 408 Request Timeout with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Request Timeout') as any;
+      error.status = 408;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Request Timeout');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 409 Conflict with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Conflict') as any;
+      error.status = 409;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Conflict');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on ECONNRESET with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Connection reset') as NodeJS.ErrnoException;
+      error.code = 'ECONNRESET';
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Connection reset');
     expect(mockFn).toHaveBeenCalledTimes(1);
   });
 
@@ -267,7 +312,9 @@ describe('retryWithBackoff', () => {
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise1 = expect(promise1).rejects.toThrow();
+    const assertionPromise1 =
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
 
@@ -282,7 +329,9 @@ describe('retryWithBackoff', () => {
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
 
-    const assertionPromise2 = expect(promise2).rejects.toThrow();
+    const assertionPromise2 =
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
 
@@ -1084,16 +1133,16 @@ describe('isRetryableNetworkError', () => {
     expect(isRetryableNetworkError(error)).toBe(true);
   });
 
-  it('should return true for ENOTFOUND', () => {
+  it('should return false for ENOTFOUND (removed from retryable codes)', () => {
     const error = new Error('Not found');
     (error as NodeJS.ErrnoException).code = 'ENOTFOUND';
-    expect(isRetryableNetworkError(error)).toBe(true);
+    expect(isRetryableNetworkError(error)).toBe(false);
   });
 
-  it('should return true for EHOSTUNREACH', () => {
+  it('should return false for EHOSTUNREACH (removed from retryable codes)', () => {
     const error = new Error('Host unreachable');
     (error as NodeJS.ErrnoException).code = 'EHOSTUNREACH';
-    expect(isRetryableNetworkError(error)).toBe(true);
+    expect(isRetryableNetworkError(error)).toBe(false);
   });
 
   it('should return true for EAI_AGAIN', () => {
@@ -1112,9 +1161,9 @@ describe('isRetryableNetworkError', () => {
     expect(isRetryableNetworkError(error)).toBe(true);
   });
 
-  it('should return true for "network error" message', () => {
+  it('should return false for "network error" message (removed overly-broad substring match)', () => {
     const error = new Error('A network error occurred');
-    expect(isRetryableNetworkError(error)).toBe(true);
+    expect(isRetryableNetworkError(error)).toBe(false);
   });
 
   it('should return true for "connection reset" message', () => {
@@ -1495,8 +1544,8 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
-    // eslint-disable-next-line vitest/valid-expect
     const assertionPromise =
+      // eslint-disable-next-line vitest/valid-expect
       expect(promise).rejects.toThrow('Connection reset');
     await vi.runAllTimersAsync();
     await assertionPromise;

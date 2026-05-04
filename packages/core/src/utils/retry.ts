@@ -387,8 +387,6 @@ const RETRYABLE_NETWORK_CODES = new Set([
   'ETIMEDOUT',
   'ESOCKETTIMEDOUT',
   'ECONNREFUSED',
-  'ENOTFOUND',
-  'EHOSTUNREACH',
   'EAI_AGAIN',
 ]);
 
@@ -400,10 +398,14 @@ const RETRYABLE_NETWORK_CODES = new Set([
  */
 function isTransientConflict(error: Error | unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
-  // Only 'lock' and 'contention' are reliable transient signals.
+  // Only 'lock'/'locked' (as whole words) and 'contention' are reliable transient signals.
+  // \b on both sides prevents false positives on "blocked", "clock", "flock".
   // 'conflict' is excluded because it appears in the standard HTTP 409 reason
   // phrase "Conflict", which would make all standards-compliant 409s transient.
-  return message.includes('lock') || message.includes('contention');
+  return (
+    new RegExp('\\bLOCKS?\\b', 'i').test(message) ||
+    message.includes('contention')
+  );
 }
 
 /**
@@ -424,7 +426,6 @@ export function isRetryableNetworkError(error: Error | unknown): boolean {
   if (
     message.includes('socket closed') ||
     message.includes('stream ended') ||
-    message.includes('network error') ||
     message.includes('connection reset') ||
     message.includes('econnreset') ||
     message.includes('etimedout')
