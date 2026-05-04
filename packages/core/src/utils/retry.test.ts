@@ -196,9 +196,10 @@ describe('retryWithBackoff', () => {
     });
 
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
+    /* eslint-disable vitest/valid-expect */
     const assertionPromise =
       expect(promise).rejects.toThrow('Too Many Requests');
+    /* eslint-enable vitest/valid-expect */
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -267,6 +268,7 @@ describe('retryWithBackoff', () => {
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
 
+    // eslint-disable-next-line vitest/valid-expect
     const assertionPromise1 = expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
@@ -282,6 +284,7 @@ describe('retryWithBackoff', () => {
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
 
+    // eslint-disable-next-line vitest/valid-expect
     const assertionPromise2 = expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
@@ -1495,9 +1498,10 @@ describe('retryWithBackoff integration — defaultShouldRetry new error paths', 
       shouldRetryOnError: (e) => classifyError(e).retryable,
     });
 
-    // eslint-disable-next-line vitest/valid-expect
+    /* eslint-disable vitest/valid-expect */
     const assertionPromise =
       expect(promise).rejects.toThrow('Connection reset');
+    /* eslint-enable vitest/valid-expect */
     await vi.runAllTimersAsync();
     await assertionPromise;
 
