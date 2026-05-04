@@ -141,16 +141,25 @@ const EMPTY_RELEVANT_AUTO_MEMORY_RESULT: RelevantAutoMemoryPromptResult = {
  */
 async function resolveAutoMemoryWithDeadline(
   promise: Promise<RelevantAutoMemoryPromptResult> | undefined,
+  onDeadline: () => void,
 ): Promise<RelevantAutoMemoryPromptResult> {
   if (!promise) {
     return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
   }
 
+  let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<RelevantAutoMemoryPromptResult>((resolve) => {
-    setTimeout(() => resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT), 2_500);
+    timer = setTimeout(() => {
+      onDeadline();
+      resolve(EMPTY_RELEVANT_AUTO_MEMORY_RESULT);
+    }, 2_500);
   });
 
-  return Promise.race([promise, deadline]);
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }
 
 export class GeminiClient {
@@ -162,6 +171,7 @@ export class GeminiClient {
   private lastPromptId: string | undefined = undefined;
   private lastSentIdeContext: IdeContext | undefined;
   private forceFullIdeContext = true;
+  private _pendingRecallAbortController: AbortController | undefined;
 
   /**
    * Cache of per-model ContentGenerators keyed by model ID.
@@ -734,11 +744,13 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       if (this.config.getManagedAutoMemoryEnabled()) {
+        const recallAbortController = new AbortController();
         relevantAutoMemoryPromise = this.config
           .getMemoryManager()
           .recall(this.config.getProjectRoot(), partToString(request), {
             config: this.config,
             excludedFilePaths: this.surfacedRelevantAutoMemoryPaths,
+            abortSignal: recallAbortController.signal,
           })
           .catch((error: unknown) => {
             debugLogger.warn(
@@ -747,6 +759,7 @@ export class GeminiClient {
             );
             return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
           });
+        this._pendingRecallAbortController = recallAbortController;
       }
 
       // record user/cron message for session management
@@ -883,8 +896,11 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       const systemReminders = [];
+      const recallAbortController = this._pendingRecallAbortController;
+      this._pendingRecallAbortController = undefined;
       const relevantAutoMemory = await resolveAutoMemoryWithDeadline(
         relevantAutoMemoryPromise,
+        () => recallAbortController?.abort(),
       );
       const relevantAutoMemoryPrompt = relevantAutoMemory.prompt;
 

@@ -131,6 +131,8 @@ export interface ResolveRelevantAutoMemoryPromptOptions {
   excludedFilePaths?: Iterable<string>;
   limit?: number;
   recentTools?: readonly string[];
+  /** When provided and aborted, suppresses logMemoryRecall telemetry for discarded results. */
+  abortSignal?: AbortSignal;
 }
 
 export interface RelevantAutoMemoryPromptResult {
@@ -168,7 +170,7 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
   const limit = options.limit ?? MAX_RELEVANT_DOCS;
 
   if (query.trim().length === 0 || docs.length === 0 || limit <= 0) {
-    if (options.config) {
+    if (options.config && !options.abortSignal?.aborted) {
       logMemoryRecall(
         options.config,
         new MemoryRecallEvent({
@@ -198,16 +200,18 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
       );
       const strategy: RelevantAutoMemoryPromptResult['strategy'] =
         selectedDocs.length > 0 ? 'model' : 'none';
-      logMemoryRecall(
-        options.config,
-        new MemoryRecallEvent({
-          query_length: query.length,
-          docs_scanned: docs.length,
-          docs_selected: selectedDocs.length,
-          strategy,
-          duration_ms: Date.now() - t0,
-        }),
-      );
+      if (!options.abortSignal?.aborted) {
+        logMemoryRecall(
+          options.config,
+          new MemoryRecallEvent({
+            query_length: query.length,
+            docs_scanned: docs.length,
+            docs_selected: selectedDocs.length,
+            strategy,
+            duration_ms: Date.now() - t0,
+          }),
+        );
+      }
       return {
         prompt: buildRelevantAutoMemoryPrompt(selectedDocs),
         selectedDocs,
@@ -224,7 +228,7 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
   const selectedDocs = selectRelevantAutoMemoryDocuments(query, docs, limit);
   const strategy: RelevantAutoMemoryPromptResult['strategy'] =
     selectedDocs.length > 0 ? 'heuristic' : 'none';
-  if (options.config) {
+  if (options.config && !options.abortSignal?.aborted) {
     logMemoryRecall(
       options.config,
       new MemoryRecallEvent({

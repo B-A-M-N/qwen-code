@@ -1841,6 +1841,45 @@ hello
       );
     });
 
+    it('should proceed without auto-memory when managed auto-memory is disabled', async () => {
+      // When getManagedAutoMemoryEnabled returns false, no recall is initiated
+      // and sendMessageStream completes without memory content
+      vi.mocked(mockConfig.getManagedAutoMemoryEnabled).mockReturnValue(false);
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      const stream = client.sendMessageStream(
+        [{ text: 'Quick question' }],
+        new AbortController().signal,
+        'prompt-id-no-memory',
+      );
+      for await (const _ of stream) {
+        // consume stream
+      }
+
+      // recall should never have been called
+      expect(mockMemoryManager.recall).not.toHaveBeenCalled();
+
+      // The main request should have been called without any memory content
+      expect(mockTurnRunFn).toHaveBeenCalledWith(
+        'test-model',
+        ['Quick question'],
+        expect.any(AbortSignal),
+      );
+
+      // Restore default
+      vi.mocked(mockConfig.getManagedAutoMemoryEnabled).mockReturnValue(true);
+    });
+
     it('should run managed auto-memory extraction after a completed user query', async () => {
       mockMemoryManager.scheduleExtract.mockResolvedValue({
         touchedTopics: ['user'],
