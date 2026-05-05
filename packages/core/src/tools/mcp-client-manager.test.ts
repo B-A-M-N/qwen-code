@@ -351,7 +351,7 @@ describe('McpClientManager', () => {
     expect(vi.mocked(McpClient)).not.toHaveBeenCalled();
   });
 
-  it('should clean up in-flight state when removing a server', async () => {
+  it('should allow re-discovery after stop()', async () => {
     const mockedClient = {
       connect: vi.fn().mockResolvedValue(undefined),
       discover: vi.fn().mockResolvedValue(undefined),
@@ -371,12 +371,7 @@ describe('McpClientManager', () => {
     } as unknown as Config;
     const manager = new McpClientManager(mockConfig, {} as ToolRegistry);
 
-    // Discover the server first
     await manager.discoverMcpToolsForServer('test-server', mockConfig);
-
-    // Simulate an in-flight discovery by directly adding to the internal set
-    // (we can't easily access private fields, so we'll test indirectly)
-    // Instead, remove the server and verify re-discovery works
     await manager.stop();
 
     // After stop, a new discovery should proceed normally
@@ -392,6 +387,66 @@ describe('McpClientManager', () => {
 
     expect(secondClient.connect).toHaveBeenCalledOnce();
     expect(secondClient.discover).toHaveBeenCalledOnce();
+  });
+
+  it('should clean up in-flight state when removing a server via incremental discovery', async () => {
+    // Use discoverAllMcpToolsIncremental to trigger removeServer indirectly:
+    // first discover with the server present, then re-discover with it removed.
+    let mockServers: Record<string, unknown> = { 'test-server': {} };
+
+    const mockedClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn().mockReturnValue('connected'),
+    };
+    vi.mocked(McpClient).mockReturnValue(mockedClient as unknown as McpClient);
+
+    const mockConfig = {
+      isTrustedFolder: () => true,
+      getMcpServers: () => mockServers,
+      getMcpServerCommand: () => undefined,
+      getPromptRegistry: () => ({}) as PromptRegistry,
+      getWorkspaceContext: () => ({}) as WorkspaceContext,
+      getDebugMode: () => false,
+      isMcpServerDisabled: () => false,
+    } as unknown as Config;
+    const mockToolRegistry = {
+      removeMcpToolsByServer: vi.fn(),
+    } as unknown as ToolRegistry;
+    const manager = new McpClientManager(
+      mockConfig,
+      mockToolRegistry,
+      undefined,
+      undefined,
+      { autoReconnect: false },
+    );
+
+    // Initial discovery: server is present
+    await manager.discoverAllMcpToolsIncremental(mockConfig);
+    expect(mockedClient.connect).toHaveBeenCalledTimes(1);
+
+    // Remove server from config and re-discover
+    mockServers = {};
+    mockedClient.connect.mockClear();
+
+    await manager.discoverAllMcpToolsIncremental(mockConfig);
+
+    // After removeServer cleans inFlightDiscoveries, a subsequent direct
+    // discovery should proceed (not be skipped by stale in-flight state).
+    const secondClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn().mockReturnValue('connected'),
+    };
+    vi.mocked(McpClient).mockReturnValue(secondClient as unknown as McpClient);
+
+    // Re-add server to config for direct discovery
+    mockServers = { 'test-server': {} };
+    await manager.discoverMcpToolsForServer('test-server', mockConfig);
+
+    expect(secondClient.connect).toHaveBeenCalledOnce();
   });
 
   it('should disconnect failed client and clean up when discoverMcpToolsForServer fails', async () => {
