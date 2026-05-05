@@ -603,6 +603,20 @@ describe('modelCommand', () => {
       vi.useFakeTimers();
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
+      // Mock fetch to hang on a pending promise; pass the abort signal
+      // through so the internal AbortController timeout propagates correctly.
+      vi.spyOn(global, 'fetch').mockImplementation((_url, opts) => {
+        const signal = opts?.signal;
+        let rejectFn: (reason: unknown) => void;
+        const promise = new Promise<Response>((_resolve, reject) => {
+          rejectFn = reject;
+        });
+        signal?.addEventListener('abort', () => rejectFn!(signal.reason), {
+          once: true,
+        });
+        return promise;
+      });
+
       // Use a 5-second custom timeout
       const fetchPromise = fetchModels(
         'https://api.example.com/v1',
