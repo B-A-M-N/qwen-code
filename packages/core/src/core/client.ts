@@ -748,7 +748,7 @@ export class GeminiClient {
     ) {
       if (this.config.getManagedAutoMemoryEnabled()) {
         const recallAbortController = new AbortController();
-        relevantAutoMemoryPromise = this.config
+        const rawRecallPromise = this.config
           .getMemoryManager()
           .recall(this.config.getProjectRoot(), partToString(request), {
             config: this.config,
@@ -763,6 +763,13 @@ export class GeminiClient {
             return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
           });
         this.pendingRecallAbortController = recallAbortController;
+        // Race the recall against the deadline at initiation time so the 2.5s
+        // budget is not consumed by intermediate work (microcompact, compression,
+        // token checks, IDE context) between initiation and consumption.
+        relevantAutoMemoryPromise = resolveAutoMemoryWithDeadline(
+          rawRecallPromise,
+          () => recallAbortController.abort(),
+        );
       }
 
       // record user/cron message for session management
@@ -907,12 +914,12 @@ export class GeminiClient {
       messageType === SendMessageType.Cron
     ) {
       const systemReminders = [];
-      const recallAbortController = this.pendingRecallAbortController;
+      // The recall promise was already raced against the 2.5s deadline at
+      // initiation time; this await just collects the result.
       this.pendingRecallAbortController = undefined;
-      const relevantAutoMemory = await resolveAutoMemoryWithDeadline(
-        relevantAutoMemoryPromise,
-        () => recallAbortController?.abort(),
-      );
+      const relevantAutoMemory = relevantAutoMemoryPromise
+        ? await relevantAutoMemoryPromise
+        : EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
       const relevantAutoMemoryPrompt = relevantAutoMemory.prompt;
 
       if (relevantAutoMemoryPrompt) {
