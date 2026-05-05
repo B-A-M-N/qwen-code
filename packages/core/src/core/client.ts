@@ -321,6 +321,12 @@ export class GeminiClient {
     debugLogger.debug('[FILE_READ_CACHE] clear after resetChat');
     this.config.getFileReadCache().clear();
     this.perModelGeneratorCache.clear();
+    // Abort any in-flight auto-memory recall so the stale controller
+    // does not leak into the next session.
+    if (this.pendingRecallAbortController) {
+      this.pendingRecallAbortController.abort();
+      this.pendingRecallAbortController = undefined;
+    }
     await this.startChat();
   }
 

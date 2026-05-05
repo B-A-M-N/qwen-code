@@ -219,10 +219,18 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
         strategy,
       };
     } catch (error) {
-      debugLogger.warn(
-        'Model-driven auto-memory recall failed; falling back to heuristic selection.',
-        error,
-      );
+      // Distinguish deadline-triggered cancellation from real model errors
+      // so oncall debugging is not misled by the fallback log.
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        debugLogger.debug(
+          'Model-driven auto-memory recall cancelled by deadline; heuristic result discarded.',
+        );
+      } else {
+        debugLogger.warn(
+          'Model-driven auto-memory recall failed; falling back to heuristic selection.',
+          error,
+        );
+      }
     }
   }
 
