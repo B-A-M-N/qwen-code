@@ -141,6 +141,14 @@ export class GeminiClient {
   private forceFullIdeContext = true;
 
   /**
+   * Cache of per-model ContentGenerators keyed by model ID.
+   * Avoids rebuilding the generator (SDK instantiation, config resolution)
+   * on every side query (recap, title, tool summary).
+   * Cleared on config changes that could affect model settings.
+   */
+  private perModelGeneratorCache = new Map<string, ContentGenerator>();
+
+  /**
    * At any point in this conversation, was compression triggered without
    * being forced and did it fail?
    */
@@ -1206,17 +1214,6 @@ export class GeminiClient {
   }
 
   /**
-   * Return a ContentGenerator for a specific model (e.g. the fast model) with
-   * its own per-model settings from modelProviders.  This prevents the main
-   * model's extra_body / samplingParams / reasoning from leaking into side
-   * queries that target a different model.
-   *
-   * Falls back to the main content generator when the target model is not in
-   * the registry or when creating a dedicated generator fails (e.g. in test
-   * environments without full auth setup).
-   */
-
-  /**
    * Resolve a model across all authTypes. Handles the case where the target
    * model is registered under a different authType than the main model
    * (e.g. main=QWEN_OAUTH, fast=USE_ANTHROPIC).
@@ -1224,6 +1221,7 @@ export class GeminiClient {
    * TODO: Move cross-authType resolution to ModelRegistry for a cleaner
    * data-layer solution. Follow-up PR.
    */
+
   private resolveModelAcrossAuthTypes(
     model: string,
   ): ResolvedModelConfig | undefined {
@@ -1261,14 +1259,31 @@ export class GeminiClient {
     return this.resolveModelAcrossAuthTypes(model)?.authType;
   }
 
+  /**
+   * Return a ContentGenerator for a specific model (e.g. the fast model) with
+   * its own per-model settings from modelProviders.  This prevents the main
+   * model's extra_body / samplingParams / reasoning from leaking into side
+   * queries that target a different model.
+   *
+   * Falls back to the main content generator when the target model is not in
+   * the registry or when creating a dedicated generator fails (e.g. in test
+   * environments without full auth setup).
+   *
+   * Results are cached by model ID to avoid rebuilding the generator
+   * (SDK instantiation, config resolution) on every side query.
+   */
   private async createContentGeneratorForModel(
     model: string,
   ): Promise<ContentGenerator> {
+    // Check cache first
+    const cached = this.perModelGeneratorCache.get(model);
+    if (cached) return cached;
+
     try {
       const resolvedModel = this.resolveModelAcrossAuthTypes(model);
 
       if (!resolvedModel) {
-        debugLogger.debug(
+        debugLogger.warn(
           `Model "${model}" not found in registry across all authTypes, falling back to main generator.`,
         );
         return this.getContentGeneratorOrFail();
@@ -1286,7 +1301,9 @@ export class GeminiClient {
         },
       );
 
-      return await createContentGenerator(targetConfig, this.config);
+      const generator = await createContentGenerator(targetConfig, this.config);
+      this.perModelGeneratorCache.set(model, generator);
+      return generator;
     } catch (err: unknown) {
       debugLogger.warn(
         `Failed to create content generator for model "${model}", falling back to main generator.`,
