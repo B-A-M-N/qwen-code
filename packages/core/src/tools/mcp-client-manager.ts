@@ -168,6 +168,10 @@ export class McpClientManager {
       return;
     }
 
+    // Track this discovery in-flight immediately — before any await — to
+    // prevent a TOCTOU race where a concurrent call slips in during disconnect.
+    this.inFlightDiscoveries.add(serverName);
+
     // Ensure we don't leak an existing connection for this server.
     const existingClient = this.clients.get(serverName);
     if (existingClient) {
@@ -184,31 +188,25 @@ export class McpClientManager {
       }
     }
 
-    // Track this discovery in-flight to prevent races.
-    const discoveryDone = () => {
-      this.inFlightDiscoveries.delete(serverName);
-    };
-    this.inFlightDiscoveries.add(serverName);
-
     // For SDK MCP servers, pass the sendSdkMcpMessage callback.
     const sdkCallback = isSdkMcpServerConfig(serverConfig)
       ? this.sendSdkMcpMessage
       : undefined;
 
-    const client = new McpClient(
-      serverName,
-      serverConfig,
-      this.toolRegistry,
-      this.cliConfig.getPromptRegistry(),
-      this.cliConfig.getWorkspaceContext(),
-      this.cliConfig.getDebugMode(),
-      sdkCallback,
-    );
-
-    this.clients.set(serverName, client);
-    this.eventEmitter?.emit('mcp-client-update', this.clients);
-
     try {
+      const client = new McpClient(
+        serverName,
+        serverConfig,
+        this.toolRegistry,
+        this.cliConfig.getPromptRegistry(),
+        this.cliConfig.getWorkspaceContext(),
+        this.cliConfig.getDebugMode(),
+        sdkCallback,
+      );
+
+      this.clients.set(serverName, client);
+      this.eventEmitter?.emit('mcp-client-update', this.clients);
+
       await client.connect();
       await client.discover(cliConfig);
       // Start health check for this server after successful discovery
@@ -220,11 +218,20 @@ export class McpClientManager {
           error,
         )}`,
       );
-      // Remove the failed client so a subsequent discovery can retry cleanly.
+      // Disconnect the failed client before removing it so spawned child
+      // processes are not orphaned.
+      const failedClient = this.clients.get(serverName);
+      if (failedClient) {
+        try {
+          await failedClient.disconnect();
+        } catch {
+          // Best-effort cleanup; ignore disconnect errors.
+        }
+      }
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
     } finally {
-      discoveryDone();
+      this.inFlightDiscoveries.delete(serverName);
       this.eventEmitter?.emit('mcp-client-update', this.clients);
     }
   }
