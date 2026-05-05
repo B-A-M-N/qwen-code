@@ -675,7 +675,13 @@ export class Config {
   private readonly defaultFileEncoding: FileEncodingType | undefined;
   private readonly enableManagedAutoMemory: boolean;
   private readonly enableManagedAutoDream: boolean;
-  private fastModel?: string;
+  /**
+   * Lightweight model for background tasks (memory extraction, dream, /btw side questions).
+   * When set and valid for the current auth type, forked agents use this model instead of
+   * the main session model, reducing latency and cost.
+   * Corresponds to the `fastModel` setting (configurable via `/model --fast`).
+   */
+  private fastModel?: { id: string; authType: AuthType };
   private readonly disableAllHooks: boolean;
   /** User-level hooks (always loaded regardless of trust) */
   private readonly userHooks?: Record<string, unknown>;
@@ -1395,12 +1401,13 @@ export class Config {
    * otherwise returns undefined. Background agents (memory extraction, dream, /btw)
    * use this as a cheaper alternative to the main session model.
    */
-  getFastModel(): string | undefined {
+  getFastModelConfig(
+    authType: AuthType,
+  ): { id: string; authType: AuthType } | undefined {
     if (!this.fastModel) return undefined;
-    const authType = this.contentGeneratorConfig?.authType;
-    if (!authType) return undefined;
+    if (this.fastModel.authType !== authType) return undefined;
     const available = this.getAvailableModelsForAuthType(authType);
-    return available.some((m) => m.id === this.fastModel)
+    return available.some((m) => m.id === this.fastModel!.id)
       ? this.fastModel
       : undefined;
   }
@@ -1409,8 +1416,12 @@ export class Config {
    * Update the fast model at runtime (e.g., when the user runs `/model --fast <model>`).
    * Pass undefined or an empty string to clear the fast model override.
    */
-  setFastModel(model: string | undefined): void {
-    this.fastModel = model || undefined;
+  setFastModel(model: string | undefined, authType?: AuthType): void {
+    if (!model || !authType) {
+      this.fastModel = undefined;
+    } else {
+      this.fastModel = { id: model, authType };
+    }
   }
 
   /**

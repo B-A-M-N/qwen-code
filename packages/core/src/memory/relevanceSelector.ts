@@ -86,12 +86,19 @@ export async function selectRelevantAutoMemoryDocumentsByModel(
   const validRelativePaths = new Set(docs.map((doc) => doc.relativePath));
   const byRelativePath = new Map(docs.map((doc) => [doc.relativePath, doc]));
 
+  const contentGeneratorConfig = config.getContentGeneratorConfig();
+  const authType = contentGeneratorConfig.authType;
+  const fastModelConfig = authType
+    ? config.getFastModelConfig(authType)
+    : undefined;
+  const model = fastModelConfig?.id ?? config.getModel();
+
   const response = await runSideQuery<RecallSelectorResponse>(config, {
     purpose: 'auto-memory-recall',
     contents,
     schema: RESPONSE_SCHEMA,
     abortSignal: AbortSignal.timeout(5_000),
-    model: config.getFastModel() ?? config.getModel(),
+    model,
     systemInstruction: SELECT_MEMORIES_SYSTEM_PROMPT,
     config: {
       temperature: 0,

@@ -224,7 +224,7 @@ export interface AgentPathParams {
   taskPrompt: string;
   /** System prompt defining the agent's persona and constraints. */
   systemPrompt: string;
-  /** Model override (defaults to config.getFastModel() ?? config.getModel()). */
+  /** Model override. */
   model?: string;
   /** Maximum number of agent turns (default: unlimited). */
   maxTurns?: number;
@@ -390,9 +390,16 @@ export async function runForkedAgent(
     systemPrompt: params.systemPrompt,
     initialMessages: params.extraHistory,
   };
+
+  const contentGeneratorConfig = params.config.getContentGeneratorConfig();
+  const authType = contentGeneratorConfig.authType;
+  const fastModelConfig = authType
+    ? params.config.getFastModelConfig(authType)
+    : undefined;
+  const model = params.model ?? fastModelConfig?.id ?? params.config.getModel();
+
   const modelConfig: ModelConfig = {
-    model:
-      params.model ?? params.config.getFastModel() ?? params.config.getModel(),
+    model,
   };
   const runConfig: RunConfig = {
     max_turns: params.maxTurns,

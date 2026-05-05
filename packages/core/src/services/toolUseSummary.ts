@@ -112,7 +112,13 @@ export async function generateToolUseSummary(
     return null;
   }
 
-  const model = params.model ?? config.getFastModel();
+  const contentGeneratorConfig = config.getContentGeneratorConfig();
+  const authType = contentGeneratorConfig.authType;
+  const fastModelConfig = authType
+    ? config.getFastModelConfig(authType)
+    : undefined;
+  const model = params.model ?? fastModelConfig?.id;
+
   if (!model) {
     debugLogger.debug('No fast model configured — skipping summary generation');
     return null;

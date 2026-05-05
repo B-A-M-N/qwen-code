@@ -56,12 +56,17 @@ async function generateKebabTitle(
       return null;
     }
 
-    // Prefer the fast model for title generation — it's much cheaper and
-    // faster than the main model, and title generation is a small bounded
-    // task that doesn't need main-model reasoning. Falls back to the main
-    // model when no fast model is configured so this path never fails to
-    // start.
-    const model = config.getFastModel() ?? config.getModel();
+    const contentGeneratorConfig = config.getContentGeneratorConfig();
+    const authType = contentGeneratorConfig.authType;
+    let model = config.getModel();
+
+    if (authType) {
+      const fastModelConfig = config.getFastModelConfig(authType);
+      if (fastModelConfig) {
+        model = fastModelConfig.id;
+      }
+    }
+
     const response = await config.getContentGenerator().generateContent(
       {
         model,
@@ -223,7 +228,10 @@ export const renameCommand: SlashCommand = {
       // the main model here because `--auto` is a deliberate opt-in to the
       // sentence-case fast-model flow, and surprising a user with a main-
       // model call would defeat the purpose.
-      if (!config.getFastModel()) {
+      if (
+        !config.getContentGeneratorConfig().authType ||
+        !config.getFastModelConfig(config.getContentGeneratorConfig().authType!)
+      ) {
         return {
           type: 'message',
           messageType: 'error',

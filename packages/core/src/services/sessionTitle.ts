@@ -106,8 +106,14 @@ export async function tryGenerateSessionTitle(
   abortSignal: AbortSignal,
 ): Promise<SessionTitleOutcome> {
   try {
-    const model = config.getFastModel();
-    if (!model) return { ok: false, reason: 'no_fast_model' };
+    const contentGeneratorConfig = config.getContentGeneratorConfig();
+    const authType = contentGeneratorConfig.authType;
+    if (!authType) return { ok: false, reason: 'no_client' };
+
+    const fastModelConfig = config.getFastModelConfig(authType);
+    if (!fastModelConfig) return { ok: false, reason: 'no_fast_model' };
+
+    const model = fastModelConfig.id;
 
     const geminiClient = config.getGeminiClient();
     if (!geminiClient) return { ok: false, reason: 'no_client' };

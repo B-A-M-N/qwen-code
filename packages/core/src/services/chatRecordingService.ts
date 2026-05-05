@@ -609,11 +609,14 @@ export class ChatRecordingService {
     // Headless/one-shot CLI flows (`qwen -p "…"`, cron, CI scripts) run a
     // single prompt and throw the session away. Spending fast-model tokens
     // on a title no one will ever resume is pure waste; skip entirely.
-    // Checked before `getFastModel()` because it's strictly cheaper (a bool
+    // Checked before `getFastModelConfig()` because it's strictly cheaper (a bool
     // field read vs. a method that looks up available models for the auth
     // type).
     if (!this.config.isInteractive()) return;
-    if (!this.config.getFastModel()) return;
+
+    const contentGeneratorConfig = this.config.getContentGeneratorConfig();
+    const authType = contentGeneratorConfig.authType;
+    if (!authType || !this.config.getFastModelConfig(authType)) return;
 
     this.autoTitleAttempts++;
     const controller = new AbortController();

@@ -60,7 +60,12 @@ export async function generateSessionRecap(
     const recentHistory = takeRecentDialog(dialog, RECENT_MESSAGE_WINDOW);
     if (recentHistory.length === 0) return null;
 
-    const model = config.getFastModel() ?? config.getModel();
+    const contentGeneratorConfig = config.getContentGeneratorConfig();
+    const authType = contentGeneratorConfig.authType;
+    if (!authType) return null;
+
+    const fastModelConfig = config.getFastModelConfig(authType);
+    const model = fastModelConfig?.id ?? config.getModel();
 
     const response = await geminiClient.generateContent(
       [

@@ -36,13 +36,19 @@ export async function runSideQuery<TResponse>(
   config: Config,
   options: SideQueryOptions<TResponse>,
 ): Promise<TResponse> {
+  const contentGeneratorConfig = config.getContentGeneratorConfig();
+  const authType = contentGeneratorConfig.authType;
+  const fastModelConfig = authType
+    ? config.getFastModelConfig(authType)
+    : undefined;
+
   const response = (await config.getBaseLlmClient().generateJson({
     contents: options.contents,
     schema: options.schema,
     abortSignal: options.abortSignal,
     model:
       options.model ??
-      config.getFastModel() ??
+      fastModelConfig?.id ??
       config.getModel() ??
       DEFAULT_QWEN_MODEL,
     systemInstruction: options.systemInstruction,

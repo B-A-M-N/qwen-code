@@ -1449,7 +1449,13 @@ export const AppContainer = (props: AppContainerProps) => {
       const fullHistory = geminiClient.getChat().getHistory(true);
       const conversationHistory =
         fullHistory.length > 40 ? fullHistory.slice(-40) : fullHistory;
-      const fastModel = config.getFastModel();
+      const contentGeneratorConfig = config.getContentGeneratorConfig();
+      const authType = contentGeneratorConfig.authType;
+      const fastModelConfig = authType
+        ? config.getFastModelConfig(authType)
+        : undefined;
+      const fastModel = fastModelConfig?.id;
+
       generatePromptSuggestion(config, conversationHistory, ac.signal, {
         enableCacheSharing: settings.merged.ui?.enableCacheSharing === true,
         model: fastModel,
