@@ -2200,6 +2200,89 @@ Other open files:
       expect(mockTurnRunFn).toHaveBeenCalledTimes(MAX_SESSION_TURNS);
     });
 
+    it('should abort the pending recall when MaxSessionTurns is hit', async () => {
+      vi.spyOn(client['config'], 'getMaxSessionTurns').mockReturnValue(1);
+      client['sessionTurnCount'] = 1; // already at limit; next call exceeds it
+
+      const abortHandler = vi.fn();
+      mockMemoryManager.recall.mockImplementation((_root, _query, opts) => {
+        opts.abortSignal?.addEventListener('abort', abortHandler);
+        return new Promise(() => {}); // never resolves
+      });
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      const stream = client.sendMessageStream(
+        [{ text: 'over the limit' }],
+        new AbortController().signal,
+        'prompt-id-over-limit',
+      );
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([{ type: GeminiEventType.MaxSessionTurns }]);
+      expect(abortHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('should abort the pending recall when SessionTokenLimitExceeded', async () => {
+      // Use a very low token limit so the (uncompressed) history exceeds it
+      vi.spyOn(client['config'], 'getSessionTokenLimit').mockReturnValue(1);
+
+      // Force token count to be above the limit
+      vi.mocked(uiTelemetryService.getLastPromptTokenCount).mockReturnValue(
+        9999,
+      );
+
+      const abortHandler = vi.fn();
+      mockMemoryManager.recall.mockImplementation((_root, _query, opts) => {
+        opts.abortSignal?.addEventListener('abort', abortHandler);
+        return new Promise(() => {}); // never resolves
+      });
+
+      const mockStream = (async function* () {
+        yield { type: 'content', value: 'Hello' };
+      })();
+      mockTurnRunFn.mockReturnValue(mockStream);
+
+      const mockChat: Partial<GeminiChat> = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+      };
+      client['chat'] = mockChat as GeminiChat;
+
+      const stream = client.sendMessageStream(
+        [{ text: 'token limit test' }],
+        new AbortController().signal,
+        'prompt-id-token-limit',
+      );
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        {
+          type: GeminiEventType.SessionTokenLimitExceeded,
+          value: expect.objectContaining({
+            currentTokens: 9999,
+            limit: 1,
+          }),
+        },
+      ]);
+      expect(abortHandler).toHaveBeenCalledTimes(1);
+    });
+
     it('should respect MAX_TURNS limit even when turns parameter is set to a large value', async () => {
       // This test verifies that the infinite loop protection works even when
       // someone tries to bypass it by calling with a very large turns value

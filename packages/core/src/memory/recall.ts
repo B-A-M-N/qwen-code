@@ -234,6 +234,16 @@ export async function resolveRelevantAutoMemoryPromptForQuery(
     }
   }
 
+  // If the caller's abort signal is already set (e.g. deadline fired), skip the
+  // heuristic fallback — the result would be discarded anyway.
+  if (options.abortSignal?.aborted) {
+    return {
+      prompt: '',
+      selectedDocs: [],
+      strategy: 'none',
+    };
+  }
+
   const selectedDocs = selectRelevantAutoMemoryDocuments(query, docs, limit);
   const strategy: RelevantAutoMemoryPromptResult['strategy'] =
     selectedDocs.length > 0 ? 'heuristic' : 'none';

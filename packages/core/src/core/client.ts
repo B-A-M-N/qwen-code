@@ -147,7 +147,7 @@ async function resolveAutoMemoryWithDeadline(
     return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
   }
 
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<RelevantAutoMemoryPromptResult>((resolve) => {
     timer = setTimeout(() => {
       try {
@@ -161,7 +161,9 @@ async function resolveAutoMemoryWithDeadline(
   try {
     return await Promise.race([promise, deadline]);
   } finally {
-    clearTimeout(timer!);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -762,10 +764,17 @@ export class GeminiClient {
             abortSignal: recallAbortController.signal,
           })
           .catch((error: unknown) => {
-            debugLogger.warn(
-              'Managed auto-memory recall prefetch failed.',
-              error,
-            );
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              debugLogger.debug(
+                'Auto-memory recall aborted by deadline.',
+                error,
+              );
+            } else {
+              debugLogger.warn(
+                'Managed auto-memory recall prefetch failed.',
+                error,
+              );
+            }
             return EMPTY_RELEVANT_AUTO_MEMORY_RESULT;
           });
         this.pendingRecallAbortController = recallAbortController;
