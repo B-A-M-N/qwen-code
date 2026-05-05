@@ -22,7 +22,6 @@ const debugLogger = createDebugLogger('CLIENT');
 
 // Core modules
 import type { ContentGenerator } from './contentGenerator.js';
-import type { ResolvedModelConfig } from '../models/types.js';
 import { AuthType, createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
 import {
@@ -200,6 +199,12 @@ export class GeminiClient {
    */
   private lastApiCompletionTimestamp: number | null = null;
 
+  /**
+   * At any point in this conversation, was compression triggered without
+   * being forced and did it fail?
+   */
+  private hasFailedCompressionAttempt = false;
+
   constructor(private readonly config: Config) {
     this.loopDetector = new LoopDetectionService(config);
   }
@@ -253,47 +258,15 @@ export class GeminiClient {
 
   private stripOrphanedUserEntriesFromHistory() {
     this.getChat().stripOrphanedUserEntriesFromHistory();
-    // Stripped trailing user entries can include read_file
-    // functionResponses from a failed-then-retried request. The
-    // FileReadCache would still record those reads, so the retry's
-    // re-issued Read could hit the file_unchanged placeholder while
-    // the model has nothing to fall back on. Clear to be safe.
-    debugLogger.debug(
-      '[FILE_READ_CACHE] clear after stripOrphanedUserEntriesFromHistory',
-    );
-    this.config.getFileReadCache().clear();
   }
 
   setHistory(history: Content[]) {
     this.getChat().setHistory(history);
-    // Replacing history wholesale drops any prior read_file tool
-    // results the FileReadCache still believes the model has seen.
-    // Without clearing, a follow-up Read of an unchanged file would
-    // return the file_unchanged placeholder for bytes that no longer
-    // exist in the new history.
-    debugLogger.debug('[FILE_READ_CACHE] clear after setHistory');
-    this.config.getFileReadCache().clear();
     this.forceFullIdeContext = true;
   }
 
   truncateHistory(keepCount: number) {
-    // Use the O(1) length getter rather than getHistory() — the latter
-    // structuredClone's the entire history just to read .length, which
-    // gets expensive in long-running sessions.
-    const prevLen = this.getChat().getHistoryLength();
     this.getChat().truncateHistory(keepCount);
-    // Decide whether to invalidate based on the *actual* post-truncate
-    // length, not on the keepCount argument. Comparing keepCount alone
-    // misses pathological inputs (e.g. NaN: slice(0, NaN) returns [],
-    // emptying history, but `NaN < prevLen` is false and would skip
-    // the clear, reintroducing the file_unchanged placeholder bug).
-    const newLen = this.getChat().getHistoryLength();
-    if (newLen < prevLen) {
-      debugLogger.debug(
-        `[FILE_READ_CACHE] clear after truncateHistory(keep=${keepCount}, prev=${prevLen}, new=${newLen})`,
-      );
-      this.config.getFileReadCache().clear();
-    }
     this.forceFullIdeContext = true;
   }
 
@@ -312,6 +285,8 @@ export class GeminiClient {
   async resetChat(): Promise<void> {
     this.surfacedRelevantAutoMemoryPaths.clear();
     this.lastApiCompletionTimestamp = null;
+    this.hasFailedCompressionAttempt = false;
+
     // startChat() rewrites the chat to its initial state. Any prior
     // read_file tool results the FileReadCache still tracks are no
     // longer in history, so a follow-up Read would serve a placeholder
@@ -802,16 +777,6 @@ export class GeminiClient {
       );
       if (mcResult.meta) {
         this.getChat().setHistory(mcResult.history);
-        // Microcompaction replaces old compactable tool outputs
-        // (including read_file) with a placeholder, but the
-        // FileReadCache still records the prior full Reads as "seen in
-        // this conversation". A follow-up Read of an unchanged file
-        // would then return the file_unchanged placeholder pointing at
-        // bytes the model can no longer retrieve from history. Drop the
-        // cache so post-microcompaction Reads re-emit the bytes,
-        // mirroring the post-compaction clear in tryCompressChat.
-        debugLogger.debug('[FILE_READ_CACHE] clear after microcompaction');
-        this.config.getFileReadCache().clear();
         const m = mcResult.meta;
         debugLogger.debug(
           `[TIME-BASED MC] gap ${m.gapMinutes}min > ${m.thresholdMinutes}min, ` +
@@ -1285,49 +1250,15 @@ export class GeminiClient {
   }
 
   /**
-   * Resolve a model across all authTypes. Handles the case where the target
-   * model is registered under a different authType than the main model
-   * (e.g. main=QWEN_OAUTH, fast=USE_ANTHROPIC).
-   *
-   * TODO: Move cross-authType resolution to ModelRegistry for a cleaner
-   * data-layer solution. Follow-up PR.
-   */
-
-  private resolveModelAcrossAuthTypes(
-    model: string,
-  ): ResolvedModelConfig | undefined {
-    const modelsConfig = this.config.getModelsConfig();
-    const allAuthTypes: AuthType[] = [
-      AuthType.QWEN_OAUTH,
-      AuthType.USE_OPENAI,
-      AuthType.USE_VERTEX_AI,
-      AuthType.USE_ANTHROPIC,
-      AuthType.USE_GEMINI,
-    ];
-
-    // Try the main authType first for early exit
-    const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
-    if (mainAuthType) {
-      const resolved = modelsConfig.getResolvedModel(mainAuthType, model);
-      if (resolved) return resolved;
-    }
-
-    for (const authType of allAuthTypes) {
-      if (authType === mainAuthType) continue;
-      const resolved = modelsConfig.getResolvedModel(authType, model);
-      if (resolved) return resolved;
-    }
-
-    return undefined;
-  }
-
-  /**
    * Resolve the authType for a given model without creating a full generator.
    * Used by retry logic to ensure provider-specific checks (e.g. QWEN_OAUTH
    * quota detection) reference the correct provider.
    */
   private createRetryAuthTypeForModel(model: string): string | undefined {
-    return this.resolveModelAcrossAuthTypes(model)?.authType;
+    const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
+    return this.config
+      .getModelsConfig()
+      .getResolvedModelAcrossAuthTypes(model, mainAuthType)?.authType;
   }
 
   /**
@@ -1347,12 +1278,15 @@ export class GeminiClient {
     model: string,
   ): Promise<ContentGenerator> {
     // Check cache first (Promise coalescing to prevent redundant SDK instantiations)
-    const cached = this.perModelGeneratorCache.get(model);
-    if (cached) return cached;
+    const cachedPromise = this.perModelGeneratorCache.get(model);
+    if (cachedPromise) return cachedPromise;
 
     const generatorPromise = (async () => {
       try {
-        const resolvedModel = this.resolveModelAcrossAuthTypes(model);
+        const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
+        const resolvedModel = this.config
+          .getModelsConfig()
+          .getResolvedModelAcrossAuthTypes(model, mainAuthType);
 
         if (!resolvedModel) {
           debugLogger.warn(
@@ -1389,11 +1323,6 @@ export class GeminiClient {
     return generatorPromise;
   }
 
-  /**
-   * Wrapper around {@link GeminiChat.tryCompress} that restores main-session
-   * startup context after successful compaction and flips the IDE full-context
-   * flag for the next regular message.
-   */
   async tryCompressChat(
     prompt_id: string,
     force: boolean = false,
@@ -1406,18 +1335,37 @@ export class GeminiClient {
       signal,
     );
     if (info.compressionStatus === CompressionStatus.COMPRESSED) {
-      const compressedHistory = this.getChat().getHistory();
-      await this.startChat(compressedHistory);
-      // startChat() creates a new GeminiChat without touching FileReadCache,
-      // so prior read_file results that were summarised away would still
-      // resolve to the file_unchanged placeholder. Clear so post-compaction
-      // Reads re-emit bytes the model can no longer see in history.
-      debugLogger.debug('[FILE_READ_CACHE] clear after tryCompressChat');
-      this.config.getFileReadCache().clear();
-      this.getChat().setLastPromptTokenCount(info.newTokenCount);
-      // Re-send a full IDE context blob on the next regular message —
-      // compression dropped the previous context turn from history.
-      this.forceFullIdeContext = true;
+      const newHistory = this.getChat().getHistory();
+      if (newHistory) {
+        const chatRecordingService = this.config.getChatRecordingService();
+        chatRecordingService?.recordChatCompression({
+          info,
+          compressedHistory: newHistory,
+        });
+
+        await this.startChat(newHistory);
+        // Compaction rewrites the prompt history: prior full-Read tool
+        // results may have been summarised away, but the FileReadCache
+        // still believes those reads are "in this conversation". A
+        // follow-up Read could then return the file_unchanged
+        // placeholder pointing at content the model can no longer
+        // retrieve from its own context. Clear the cache so post-
+        // compaction Reads re-emit the bytes.
+        debugLogger.debug('[FILE_READ_CACHE] clear after tryCompressChat');
+        this.config.getFileReadCache().clear();
+        uiTelemetryService.setLastPromptTokenCount(info.newTokenCount);
+        this.forceFullIdeContext = true;
+      }
+    } else if (
+      info.compressionStatus ===
+        CompressionStatus.COMPRESSION_FAILED_INFLATED_TOKEN_COUNT ||
+      info.compressionStatus ===
+        CompressionStatus.COMPRESSION_FAILED_EMPTY_SUMMARY
+    ) {
+      // Track failed attempts (only mark as failed if not forced)
+      if (!force) {
+        this.hasFailedCompressionAttempt = true;
+      }
     }
     return info;
   }
