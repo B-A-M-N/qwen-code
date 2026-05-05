@@ -58,6 +58,7 @@ export class McpClientManager {
   private healthCheckTimers: Map<string, NodeJS.Timeout> = new Map();
   private consecutiveFailures: Map<string, number> = new Map();
   private isReconnecting: Map<string, boolean> = new Map();
+  private inFlightDiscoveries: Set<string> = new Set();
 
   constructor(
     config: Config,
@@ -157,6 +158,20 @@ export class McpClientManager {
       return;
     }
 
+    // Prevent concurrent re-discovery of the same server to avoid spawning
+    // duplicate MCP child processes. If a discovery/reconnection is already
+    // in progress for this server, bail out early.
+    if (this.inFlightDiscoveries.has(serverName)) {
+      debugLogger.debug(
+        `Discovery already in flight for server '${serverName}', skipping.`,
+      );
+      return;
+    }
+
+    // Track this discovery in-flight immediately — before any await — to
+    // prevent a TOCTOU race where a concurrent call slips in during disconnect.
+    this.inFlightDiscoveries.add(serverName);
+
     // Ensure we don't leak an existing connection for this server.
     const existingClient = this.clients.get(serverName);
     if (existingClient) {
@@ -168,6 +183,7 @@ export class McpClientManager {
         );
       } finally {
         this.clients.delete(serverName);
+        this.stopHealthCheck(serverName);
         this.eventEmitter?.emit('mcp-client-update', this.clients);
       }
     }
@@ -177,20 +193,20 @@ export class McpClientManager {
       ? this.sendSdkMcpMessage
       : undefined;
 
-    const client = new McpClient(
-      serverName,
-      serverConfig,
-      this.toolRegistry,
-      this.cliConfig.getPromptRegistry(),
-      this.cliConfig.getWorkspaceContext(),
-      this.cliConfig.getDebugMode(),
-      sdkCallback,
-    );
-
-    this.clients.set(serverName, client);
-    this.eventEmitter?.emit('mcp-client-update', this.clients);
-
     try {
+      const client = new McpClient(
+        serverName,
+        serverConfig,
+        this.toolRegistry,
+        this.cliConfig.getPromptRegistry(),
+        this.cliConfig.getWorkspaceContext(),
+        this.cliConfig.getDebugMode(),
+        sdkCallback,
+      );
+
+      this.clients.set(serverName, client);
+      this.eventEmitter?.emit('mcp-client-update', this.clients);
+
       await client.connect();
       await client.discover(cliConfig);
       // Start health check for this server after successful discovery
@@ -202,7 +218,21 @@ export class McpClientManager {
           error,
         )}`,
       );
+      // Disconnect the failed client (may have spawned a child process)
+      // before removing it from the map, to avoid orphaned processes.
+      const failedClient = this.clients.get(serverName);
+      if (failedClient) {
+        try {
+          await failedClient.disconnect();
+        } catch {
+          // Ignore disconnect errors — the client may never have connected
+        }
+      }
+      // Remove the failed client so a subsequent discovery can retry cleanly.
+      this.clients.delete(serverName);
+      this.stopHealthCheck(serverName);
     } finally {
+      this.inFlightDiscoveries.delete(serverName);
       this.eventEmitter?.emit('mcp-client-update', this.clients);
     }
   }
@@ -231,6 +261,7 @@ export class McpClientManager {
     this.clients.clear();
     this.consecutiveFailures.clear();
     this.isReconnecting.clear();
+    this.inFlightDiscoveries.clear();
   }
 
   /**
@@ -253,6 +284,7 @@ export class McpClientManager {
         this.clients.delete(serverName);
         this.consecutiveFailures.delete(serverName);
         this.isReconnecting.delete(serverName);
+        this.inFlightDiscoveries.delete(serverName);
         this.eventEmitter?.emit('mcp-client-update', this.clients);
       }
     }
@@ -388,11 +420,25 @@ export class McpClientManager {
         setTimeout(resolve, this.healthConfig.reconnectDelayMs),
       );
 
+      // Guard: another discovery may have completed during the delay window
+      // and cleared inFlightDiscoveries. Check before proceeding.
+      if (this.inFlightDiscoveries.has(serverName)) {
+        debugLogger.debug(
+          `Reconnect skipped: discovery already in flight for '${serverName}'`,
+        );
+        return;
+      }
+
       await this.discoverMcpToolsForServer(serverName, this.cliConfig);
 
-      // Reset failure count on successful reconnection
-      this.consecutiveFailures.set(serverName, 0);
-      debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      // Only report success if the server is actually connected.
+      // discoverMcpToolsForServer() may return early (in-flight guard),
+      // in which case the server won't be connected.
+      const client = this.clients.get(serverName);
+      if (client && client.getStatus() === MCPServerStatus.CONNECTED) {
+        this.consecutiveFailures.set(serverName, 0);
+        debugLogger.info(`Successfully reconnected to server '${serverName}'`);
+      }
     } catch (error) {
       debugLogger.error(
         `Failed to reconnect to server '${serverName}': ${getErrorMessage(error)}`,
@@ -482,6 +528,8 @@ export class McpClientManager {
       this.clients.delete(serverName);
       this.stopHealthCheck(serverName);
       this.consecutiveFailures.delete(serverName);
+      this.inFlightDiscoveries.delete(serverName);
+      this.isReconnecting.delete(serverName);
     }
 
     // Remove tools for this server from registry

@@ -19,6 +19,8 @@ import {
   retryWithBackoff,
   isTransientCapacityError,
   isUnattendedMode,
+  isRetryableNetworkError,
+  classifyError,
 } from './retry.js';
 import { getErrorStatus } from './errors.js';
 import { setSimulate429 } from './testUtils.js';
@@ -97,6 +99,7 @@ describe('retryWithBackoff', () => {
     // 2. IMPORTANT: Attach the rejection expectation to the promise *immediately*.
     //    This ensures a 'catch' handler is present before the promise can reject.
     //    The result is a new promise that resolves when the assertion is met.
+
     // eslint-disable-next-line vitest/valid-expect
     const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 3',
@@ -117,9 +120,10 @@ describe('retryWithBackoff', () => {
     // This function will fail more than 7 times to ensure all retries are used.
     const mockFn = createFailingFunction(10);
 
-    const promise = retryWithBackoff(mockFn);
+    const promise = retryWithBackoff(mockFn, { initialDelayMs: 10 });
 
     // Expect it to fail with the error from the 7th attempt.
+
     // eslint-disable-next-line vitest/valid-expect
     const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
@@ -134,9 +138,13 @@ describe('retryWithBackoff', () => {
     // This function will fail more than 7 times to ensure all retries are used.
     const mockFn = createFailingFunction(10);
 
-    const promise = retryWithBackoff(mockFn, { maxAttempts: undefined });
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: undefined,
+      initialDelayMs: 10,
+    });
 
     // Expect it to fail with the error from the 7th attempt.
+
     // eslint-disable-next-line vitest/valid-expect
     const assertionPromise = expect(promise).rejects.toThrow(
       'Simulated error attempt 7',
@@ -189,7 +197,8 @@ describe('retryWithBackoff', () => {
 
     // Attach the rejection expectation *before* running timers
     const assertionPromise =
-      expect(promise).rejects.toThrow('Too Many Requests'); // eslint-disable-line vitest/valid-expect
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise).rejects.toThrow('Too Many Requests');
 
     // Run timers to trigger retries and eventual rejection
     await vi.runAllTimersAsync();
@@ -212,6 +221,51 @@ describe('retryWithBackoff', () => {
       initialDelayMs: 10,
     });
     await expect(promise).rejects.toThrow('Bad Request');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 408 Request Timeout with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Request Timeout') as any;
+      error.status = 408;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Request Timeout');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 409 Conflict with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Conflict') as any;
+      error.status = 409;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Conflict');
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on ECONNRESET with default shouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Connection reset') as NodeJS.ErrnoException;
+      error.code = 'ECONNRESET';
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+    });
+    await expect(promise).rejects.toThrow('Connection reset');
     expect(mockFn).toHaveBeenCalledTimes(1);
   });
 
@@ -250,15 +304,17 @@ describe('retryWithBackoff', () => {
     const runRetry = () =>
       retryWithBackoff(mockFn, {
         maxAttempts: 2, // Only one retry, so one delay
-        initialDelayMs: 100,
-        maxDelayMs: 1000,
+        initialDelayMs: 10,
+        maxDelayMs: 100,
       });
 
     // We expect rejections as mockFn fails 5 times
     const promise1 = runRetry();
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise1 = expect(promise1).rejects.toThrow();
+
+    const assertionPromise1 =
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise1).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the first runRetry
     await assertionPromise1;
 
@@ -272,8 +328,10 @@ describe('retryWithBackoff', () => {
 
     const promise2 = runRetry();
     // Attach the rejection expectation *before* running timers
-    // eslint-disable-next-line vitest/valid-expect
-    const assertionPromise2 = expect(promise2).rejects.toThrow();
+
+    const assertionPromise2 =
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise2).rejects.toThrow();
     await vi.runAllTimersAsync(); // Advance for the delay in the second runRetry
     await assertionPromise2;
 
@@ -291,10 +349,10 @@ describe('retryWithBackoff', () => {
       throw new Error('Delays were not captured for jitter test');
     }
 
-    // Ensure delays are within the expected jitter range [70, 130] for initialDelayMs = 100
+    // Ensure delays are within the expected jitter range [7, 13] for initialDelayMs = 10
     [...firstDelaySet, ...secondDelaySet].forEach((d) => {
-      expect(d).toBeGreaterThanOrEqual(100 * 0.7);
-      expect(d).toBeLessThanOrEqual(100 * 1.3);
+      expect(d).toBeGreaterThanOrEqual(10 * 0.7);
+      expect(d).toBeLessThanOrEqual(10 * 1.3);
     });
   });
 
@@ -498,6 +556,31 @@ describe('isTransientCapacityError', () => {
   it('should return false for errors without status', () => {
     expect(isTransientCapacityError(new Error('generic'))).toBe(false);
     expect(isTransientCapacityError(null)).toBe(false);
+  });
+
+  // 408 and network errors are NOT transient capacity errors — they can indicate
+  // permanent config issues and should not trigger indefinite persistent retries.
+  // They remain retryable in standard mode via classifyError.
+  it('should return false for 408 errors', () => {
+    const error = { status: 408 };
+    expect(isTransientCapacityError(error)).toBe(false);
+  });
+
+  it('should return false for ECONNRESET network errors', () => {
+    const error = new Error('Connection reset') as NodeJS.ErrnoException;
+    error.code = 'ECONNRESET';
+    expect(isTransientCapacityError(error)).toBe(false);
+  });
+
+  it('should return false for ETIMEDOUT network errors', () => {
+    const error = new Error('Timed out') as NodeJS.ErrnoException;
+    error.code = 'ETIMEDOUT';
+    expect(isTransientCapacityError(error)).toBe(false);
+  });
+
+  it('should return false for "socket closed" message', () => {
+    const error = new Error('The socket closed unexpectedly');
+    expect(isTransientCapacityError(error)).toBe(false);
   });
 });
 
@@ -713,7 +796,7 @@ describe('retryWithBackoff - persistent mode', () => {
 
     const promise = retryWithBackoff(fn, {
       maxAttempts: 3,
-      initialDelayMs: 10000, // Long delay so abort happens during sleep
+      initialDelayMs: 100, // Short delay; abort via setTimeout below
       persistentMode: true,
       heartbeatIntervalMs: 50,
       signal: controller.signal,
@@ -1022,5 +1105,493 @@ describe('getErrorStatus', () => {
 
   it('should not match HTTP_STATUS/NNN when adjacent to more digits', () => {
     expect(getErrorStatus(new Error('HTTP_STATUS/4291'))).toBeUndefined();
+  });
+});
+
+describe('isRetryableNetworkError', () => {
+  it('should return true for ECONNRESET', () => {
+    const error = new Error('Connection reset');
+    (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ETIMEDOUT', () => {
+    const error = new Error('Timed out');
+    (error as NodeJS.ErrnoException).code = 'ETIMEDOUT';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ESOCKETTIMEDOUT', () => {
+    const error = new Error('Socket timed out');
+    (error as NodeJS.ErrnoException).code = 'ESOCKETTIMEDOUT';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for ECONNREFUSED', () => {
+    const error = new Error('Connection refused');
+    (error as NodeJS.ErrnoException).code = 'ECONNREFUSED';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return false for ENOTFOUND (removed from retryable codes)', () => {
+    const error = new Error('Not found');
+    (error as NodeJS.ErrnoException).code = 'ENOTFOUND';
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return false for EHOSTUNREACH (removed from retryable codes)', () => {
+    const error = new Error('Host unreachable');
+    (error as NodeJS.ErrnoException).code = 'EHOSTUNREACH';
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return true for EAI_AGAIN', () => {
+    const error = new Error('Temporary failure');
+    (error as NodeJS.ErrnoException).code = 'EAI_AGAIN';
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "socket closed" message', () => {
+    const error = new Error('The socket closed unexpectedly');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "stream ended" message', () => {
+    const error = new Error('The stream ended before completion');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return false for "network error" message (removed overly-broad substring match)', () => {
+    const error = new Error('A network error occurred');
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return true for "connection reset" message', () => {
+    const error = new Error('connection reset by peer');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "econnreset" message (case-insensitive)', () => {
+    const error = new Error('ECONNRESET: econnreset');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return true for "etimedout" message (case-insensitive)', () => {
+    const error = new Error('etimedout waiting for response');
+    expect(isRetryableNetworkError(error)).toBe(true);
+  });
+
+  it('should return false for non-retryable errors', () => {
+    const error = new Error('Bad request');
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return false for errors with non-retryable codes', () => {
+    const error = new Error('Permission denied');
+    (error as NodeJS.ErrnoException).code = 'EACCES';
+    expect(isRetryableNetworkError(error)).toBe(false);
+  });
+
+  it('should return false for null/undefined', () => {
+    expect(isRetryableNetworkError(null)).toBe(false);
+    expect(isRetryableNetworkError(undefined)).toBe(false);
+  });
+});
+
+describe('classifyError', () => {
+  it('should classify 400 as non-retryable', () => {
+    const error = { status: 400 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+    expect(result.status).toBe(400);
+  });
+
+  it('should classify 401 as non-retryable', () => {
+    const error = { status: 401 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 403 as non-retryable', () => {
+    const error = { status: 403 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 404 as non-retryable', () => {
+    const error = { status: 404 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 422 as non-retryable', () => {
+    const error = { status: 422 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic request error');
+  });
+
+  it('should classify 429 as retryable', () => {
+    const error = { status: 429 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Rate limited');
+    expect(result.status).toBe(429);
+  });
+
+  it('should classify 408 as retryable', () => {
+    const error = { status: 408 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Request timeout');
+  });
+
+  it('should classify 409 with transient message as retryable', () => {
+    const error: HttpError = new Error('Lock contention detected');
+    error.status = 409;
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Transient conflict');
+  });
+
+  it('should classify 409 with contention message as retryable', () => {
+    const error: HttpError = new Error('Resource contention');
+    error.status = 409;
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+  });
+
+  // 'conflict' is NOT a transient keyword — it appears in the standard HTTP 409
+  // reason phrase "Conflict", so matching it would make all 409s transient.
+  it('should classify 409 with conflict-only message as non-retryable', () => {
+    const error: HttpError = Object.assign(new Error('Duplicate resource'), {
+      status: 409,
+    });
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic conflict');
+  });
+
+  it('should classify 409 without transient message as non-retryable', () => {
+    const error: HttpError = Object.assign(new Error('Validation failed'), {
+      status: 409,
+    });
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Deterministic conflict');
+  });
+
+  it('should classify 500 as retryable', () => {
+    const error = { status: 500 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify 503 as retryable', () => {
+    const error = { status: 503 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify 599 as retryable', () => {
+    const error = { status: 599 };
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('Server error');
+  });
+
+  it('should classify ECONNRESET as retryable network error', () => {
+    const error = new Error('Connection reset');
+    (error as NodeJS.ErrnoException).code = 'ECONNRESET';
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('network error');
+  });
+
+  it('should classify "socket closed" as retryable network error', () => {
+    const error = new Error('The socket closed unexpectedly');
+    const result = classifyError(error);
+    expect(result.retryable).toBe(true);
+    expect(result.reason).toContain('network error');
+  });
+
+  it('should classify unknown errors as non-retryable', () => {
+    const error = new Error('Something weird happened');
+    const result = classifyError(error);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
+  });
+
+  it('should classify null as non-retryable', () => {
+    const result = classifyError(null);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
+  });
+
+  it('should classify undefined as non-retryable', () => {
+    const result = classifyError(undefined);
+    expect(result.retryable).toBe(false);
+    expect(result.reason).toContain('Non-retryable');
+  });
+});
+
+describe('retryWithBackoff integration — defaultShouldRetry new error paths', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setSimulate429(false);
+    console.warn = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  // --- 408 Request Timeout ---
+  // Note: defaultShouldRetry only retries 429/5xx. 408 requires a custom
+  // shouldRetryOnError (e.g. classifyError) — these tests verify that
+  // callers using classifyError-based retry DO retry on 408.
+
+  it('should retry on 408 when shouldRetryOnError uses classifyError', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Request Timeout') as any;
+        error.status = 408;
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should exhaust retries on persistent 408 with classifyError', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Request Timeout') as any;
+      error.status = 408;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    // eslint-disable-next-line vitest/valid-expect
+    const assertionPromise = expect(promise).rejects.toThrow('Request Timeout');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  // --- 409 Conflict (transient vs deterministic) ---
+
+  it('should retry on 409 with lock contention message when using classifyError', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error: HttpError = new Error('Lock contention on resource');
+        error.status = 409;
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should NOT retry on 409 without transient message', async () => {
+    const mockFn = vi.fn(async () => {
+      const error: HttpError = new Error('Resource already exists');
+      error.status = 409;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    // Attach rejection handler before running timers to avoid unhandled rejection
+    // eslint-disable-next-line vitest/valid-expect
+    const assertionPromise = expect(promise).rejects.toThrow(
+      'Resource already exists',
+    );
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Network errors ---
+
+  it('should retry on ECONNRESET when shouldRetryOnError uses classifyError', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Connection reset') as NodeJS.ErrnoException;
+        error.code = 'ECONNRESET';
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should retry on ETIMEDOUT when shouldRetryOnError uses classifyError', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('Operation timed out') as NodeJS.ErrnoException;
+        error.code = 'ETIMEDOUT';
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should retry on "socket closed" message when using classifyError', async () => {
+    let attempts = 0;
+    const mockFn = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('The socket closed unexpectedly');
+        throw error;
+      }
+      return 'ok';
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should exhaust retries on persistent network error with classifyError', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Connection reset') as NodeJS.ErrnoException;
+      error.code = 'ECONNRESET';
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 2,
+      initialDelayMs: 10,
+      shouldRetryOnError: (e) => classifyError(e).retryable,
+    });
+
+    const assertionPromise =
+      // eslint-disable-next-line vitest/valid-expect
+      expect(promise).rejects.toThrow('Connection reset');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Non-retryable status codes should NOT retry ---
+
+  it('should NOT retry on 401 via defaultShouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Unauthorized') as any;
+      error.status = 401;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    // eslint-disable-next-line vitest/valid-expect
+    const assertionPromise = expect(promise).rejects.toThrow('Unauthorized');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should NOT retry on 404 via defaultShouldRetry', async () => {
+    const mockFn = vi.fn(async () => {
+      const error = new Error('Not Found') as any;
+      error.status = 404;
+      throw error;
+    });
+
+    const promise = retryWithBackoff(mockFn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+    });
+
+    // eslint-disable-next-line vitest/valid-expect
+    const assertionPromise = expect(promise).rejects.toThrow('Not Found');
+    await vi.runAllTimersAsync();
+    await assertionPromise;
+
+    expect(mockFn).toHaveBeenCalledTimes(1);
   });
 });

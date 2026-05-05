@@ -17,8 +17,11 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import { createUserContent, FinishReason } from '@google/genai';
-import { retryWithBackoff, isUnattendedMode } from '../utils/retry.js';
-import { getErrorStatus } from '../utils/errors.js';
+import {
+  retryWithBackoff,
+  isUnattendedMode,
+  classifyError,
+} from '../utils/retry.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { parseAndFormatApiError } from '../utils/errorParsing.js';
 import { isRateLimitError, type RetryInfo } from '../utils/rateLimit.js';
@@ -713,17 +716,20 @@ export class GeminiChat {
       );
     const streamResponse = await retryWithBackoff(apiCall, {
       shouldRetryOnError: (error: unknown) => {
+        // Independent safety-net guards not covered by classifyError:
+        // never retry schema-depth-limit or invalid-argument errors regardless
+        // of what classifyError returns.
         if (error instanceof Error) {
           if (isSchemaDepthError(error.message)) return false;
           if (isInvalidArgumentError(error.message)) return false;
         }
 
-        const status = getErrorStatus(error);
-        if (status === 400) return false;
-        if (status === 429) return true;
-        if (status && status >= 500 && status < 600) return true;
-
-        return false;
+        // Delegate to classifyError for all remaining cases. Explicitly accepted
+        // retryable categories for Gemini streaming: 408 (timeout), 409 (transient
+        // lock/contention only), 429 (rate limit), 5xx (server errors), network
+        // transport errors. Deterministic errors (400, 401, 403, 404, 422) are
+        // handled by classifyError and return retryable=false.
+        return classifyError(error).retryable;
       },
       authType: this.config.getContentGeneratorConfig()?.authType,
       persistentMode: isUnattendedMode(),
