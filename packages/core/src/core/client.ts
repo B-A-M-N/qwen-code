@@ -146,7 +146,7 @@ export class GeminiClient {
    * on every side query (recap, title, tool summary).
    * Cleared on config changes that could affect model settings.
    */
-  private perModelGeneratorCache = new Map<string, ContentGenerator>();
+  private perModelGeneratorCache = new Map<string, Promise<ContentGenerator>>();
 
   /**
    * At any point in this conversation, was compression triggered without
@@ -1275,42 +1275,47 @@ export class GeminiClient {
   private async createContentGeneratorForModel(
     model: string,
   ): Promise<ContentGenerator> {
-    // Check cache first
+    // Check cache first (Promise coalescing to prevent redundant SDK instantiations)
     const cached = this.perModelGeneratorCache.get(model);
     if (cached) return cached;
 
-    try {
-      const resolvedModel = this.resolveModelAcrossAuthTypes(model);
+    const generatorPromise = (async () => {
+      try {
+        const resolvedModel = this.resolveModelAcrossAuthTypes(model);
 
-      if (!resolvedModel) {
-        debugLogger.warn(
-          `Model "${model}" not found in registry across all authTypes, falling back to main generator.`,
+        if (!resolvedModel) {
+          debugLogger.warn(
+            `Model "${model}" not found in registry across all authTypes, falling back to main generator.`,
+          );
+          return this.getContentGeneratorOrFail();
+        }
+
+        const targetConfig = buildAgentContentGeneratorConfig(
+          this.config,
+          model,
+          {
+            authType: resolvedModel.authType,
+            apiKey: resolvedModel.envKey
+              ? (process.env[resolvedModel.envKey] ?? undefined)
+              : undefined,
+            baseUrl: resolvedModel.baseUrl,
+          },
         );
+
+        return await createContentGenerator(targetConfig, this.config);
+      } catch (err: unknown) {
+        debugLogger.warn(
+          `Failed to create content generator for model "${model}", falling back to main generator.`,
+          err instanceof Error ? err.message : String(err),
+        );
+        // On failure, delete from cache so subsequent attempts can retry.
+        this.perModelGeneratorCache.delete(model);
         return this.getContentGeneratorOrFail();
       }
+    })();
 
-      const targetConfig = buildAgentContentGeneratorConfig(
-        this.config,
-        model,
-        {
-          authType: resolvedModel.authType,
-          apiKey: resolvedModel.envKey
-            ? (process.env[resolvedModel.envKey] ?? undefined)
-            : undefined,
-          baseUrl: resolvedModel.baseUrl,
-        },
-      );
-
-      const generator = await createContentGenerator(targetConfig, this.config);
-      this.perModelGeneratorCache.set(model, generator);
-      return generator;
-    } catch (err: unknown) {
-      debugLogger.warn(
-        `Failed to create content generator for model "${model}", falling back to main generator.`,
-        err instanceof Error ? err.message : String(err),
-      );
-      return this.getContentGeneratorOrFail();
-    }
+    this.perModelGeneratorCache.set(model, generatorPromise);
+    return generatorPromise;
   }
 
   async tryCompressChat(

@@ -28,12 +28,18 @@ import { type GeminiChat } from './geminiChat.js';
 import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../config/config.js';
 import type { ModelsConfig } from '../models/modelsConfig.js';
+import { retryWithBackoff } from '../utils/retry.js';
 import {
   CompressionStatus,
   GeminiEventType,
   Turn,
   type ChatCompressionInfo,
 } from './turn.js';
+
+vi.mock('../utils/retry.js', () => ({
+  retryWithBackoff: vi.fn(async (fn) => await fn()),
+  isUnattendedMode: vi.fn(() => false),
+}));
 import { getCoreSystemPrompt, getCustomSystemPrompt } from './prompts.js';
 import { DEFAULT_QWEN_FLASH_MODEL } from '../config/models.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
@@ -3387,6 +3393,9 @@ Other open files:
         apiModel: 'test-model',
       } as unknown as ContentGeneratorConfig);
 
+      // Success path for createContentGenerator
+      vi.mocked(createContentGenerator).mockResolvedValue(mockContentGenerator);
+
       await client.generateContent(
         contents,
         { temperature: 0.5 },
@@ -3394,14 +3403,40 @@ Other open files:
         'fast-model',
       );
 
-      // The retry call should receive the fast model's authType, not the main model's
-      // (In test env the retry is a no-op, but the config is passed correctly)
-      // We verify by checking createContentGeneratorForModel was exercised
-      // via the getResolvedModel call with openai authType
-      expect(getResolvedModel).toHaveBeenCalledWith(
-        AuthType.QWEN_OAUTH, // initial lookup uses main authType
-        'fast-model',
+      // VERIFY: retryWithBackoff was called with the fast model's authType ('openai'),
+      // not the main model's authType ('QWEN_OAUTH').
+      expect(retryWithBackoff).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({
+          authType: 'openai',
+        }),
       );
+    });
+
+    it('should cache per-model content generators', async () => {
+      const contents = [{ role: 'user', parts: [{ text: 'hello' }] }];
+      const mockResolvedModel = {
+        id: 'fast-model',
+        authType: 'openai' as const,
+        name: 'Fast Model',
+        baseUrl: 'https://fast-api.example.com',
+        generationConfig: {},
+        capabilities: {},
+      };
+
+      vi.mocked(mockConfig.getModelsConfig).mockReturnValue({
+        getResolvedModel: vi.fn().mockReturnValue(mockResolvedModel),
+      } as unknown as ModelsConfig);
+
+      vi.mocked(createContentGenerator).mockResolvedValue(mockContentGenerator);
+
+      // First call
+      await client.generateContent(contents, {}, undefined, 'fast-model');
+      expect(createContentGenerator).toHaveBeenCalledTimes(1);
+
+      // Second call - should use cache
+      await client.generateContent(contents, {}, undefined, 'fast-model');
+      expect(createContentGenerator).toHaveBeenCalledTimes(1);
     });
   });
 });
