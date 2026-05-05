@@ -58,7 +58,7 @@ export class McpClientManager {
   private healthCheckTimers: Map<string, NodeJS.Timeout> = new Map();
   private consecutiveFailures: Map<string, number> = new Map();
   private isReconnecting: Map<string, boolean> = new Map();
-  private inFlightDiscoveries: Set<string> = new Set();
+  private inFlightDiscoveries: Map<string, Promise<void>> = new Map();
 
   constructor(
     config: Config,
@@ -131,6 +131,15 @@ export class McpClientManager {
               error,
             )}`,
           );
+          // Disconnect the failed client and remove it so a subsequent
+          // incremental discovery can retry cleanly instead of seeing a
+          // half-dead entry in this.clients.
+          try {
+            await client.disconnect();
+          } catch {
+            // Best-effort cleanup
+          }
+          this.clients.delete(name);
         }
       },
     );
@@ -144,6 +153,11 @@ export class McpClientManager {
    * The connected client is tracked so it can be closed by {@link stop}.
    *
    * This is primarily used for on-demand re-discovery flows (e.g. after OAuth).
+   *
+   * **Concurrent-call semantics:** If a discovery for the same server is already
+   * in flight, the second (and subsequent) callers coalesce onto the same
+   * promise — they all resolve/reject together and see the same outcome.
+   * Callers do NOT need to retry on their own; the in-flight discovery handles it.
    */
   async discoverMcpToolsForServer(
     serverName: string,
@@ -158,19 +172,23 @@ export class McpClientManager {
       return;
     }
 
-    // Prevent concurrent re-discovery of the same server to avoid spawning
-    // duplicate MCP child processes. If a discovery/reconnection is already
-    // in progress for this server, bail out early.
-    if (this.inFlightDiscoveries.has(serverName)) {
+    // Coalesce concurrent discoveries for the same server into a single
+    // in-flight promise so all callers see the same outcome.
+    const existing = this.inFlightDiscoveries.get(serverName);
+    if (existing) {
       debugLogger.debug(
-        `Discovery already in flight for server '${serverName}', skipping.`,
+        `Discovery already in flight for server '${serverName}', coalescing.`,
       );
-      return;
+      return existing;
     }
 
     // Track this discovery in-flight immediately — before any await — to
     // prevent a TOCTOU race where a concurrent call slips in during disconnect.
-    this.inFlightDiscoveries.add(serverName);
+    let resolveDone!: () => void;
+    const discoveryPromise = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    this.inFlightDiscoveries.set(serverName, discoveryPromise);
 
     // Ensure we don't leak an existing connection for this server.
     const existingClient = this.clients.get(serverName);
@@ -178,8 +196,12 @@ export class McpClientManager {
       try {
         await existingClient.disconnect();
       } catch (error) {
-        debugLogger.error(
-          `Error stopping client '${serverName}': ${getErrorMessage(error)}`,
+        // If disconnect fails (child ignores SIGTERM, stdin close, etc.),
+        // the child process may still be running. Log at warn so this is
+        // observable in production logs — a follow-up may need force-kill
+        // (e.g. tree-kill) to cover this gap.
+        debugLogger.warn(
+          `disconnect() threw for server '${serverName}' — child process may be orphaned: ${getErrorMessage(error)}`,
         );
       } finally {
         this.clients.delete(serverName);
@@ -193,8 +215,9 @@ export class McpClientManager {
       ? this.sendSdkMcpMessage
       : undefined;
 
+    let client: McpClient | undefined;
     try {
-      const client = new McpClient(
+      client = new McpClient(
         serverName,
         serverConfig,
         this.toolRegistry,
@@ -220,10 +243,9 @@ export class McpClientManager {
       );
       // Disconnect the failed client before removing it so spawned child
       // processes are not orphaned.
-      const failedClient = this.clients.get(serverName);
-      if (failedClient) {
+      if (client) {
         try {
-          await failedClient.disconnect();
+          await client.disconnect();
         } catch {
           // Best-effort cleanup; ignore disconnect errors.
         }
@@ -232,6 +254,7 @@ export class McpClientManager {
       this.stopHealthCheck(serverName);
     } finally {
       this.inFlightDiscoveries.delete(serverName);
+      resolveDone();
       this.eventEmitter?.emit('mcp-client-update', this.clients);
     }
   }
@@ -420,14 +443,10 @@ export class McpClientManager {
 
       await this.discoverMcpToolsForServer(serverName, this.cliConfig);
 
-      // Only report success if the server is actually connected.
-      // discoverMcpToolsForServer() may return early (in-flight guard),
-      // in which case the server won't be connected.
-      const client = this.clients.get(serverName);
-      if (client && client.getStatus() === MCPServerStatus.CONNECTED) {
-        this.consecutiveFailures.set(serverName, 0);
-        debugLogger.info(`Successfully reconnected to server '${serverName}'`);
-      }
+      // With promise-coalescing, if the promise resolved the discovery
+      // succeeded — reset failures and report success.
+      this.consecutiveFailures.set(serverName, 0);
+      debugLogger.info(`Successfully reconnected to server '${serverName}'`);
     } catch (error) {
       debugLogger.error(
         `Failed to reconnect to server '${serverName}': ${getErrorMessage(error)}`,
