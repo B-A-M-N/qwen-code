@@ -22,6 +22,7 @@ const debugLogger = createDebugLogger('CLIENT');
 
 // Core modules
 import type { ContentGenerator } from './contentGenerator.js';
+import type { ResolvedModelConfig } from '../models/types.js';
 import { AuthType, createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
 import {
@@ -1216,33 +1217,59 @@ export class GeminiClient {
    */
 
   /**
+   * Resolve a model across all authTypes. Handles the case where the target
+   * model is registered under a different authType than the main model
+   * (e.g. main=QWEN_OAUTH, fast=USE_ANTHROPIC).
+   *
+   * TODO: Move cross-authType resolution to ModelRegistry for a cleaner
+   * data-layer solution. Follow-up PR.
+   */
+  private resolveModelAcrossAuthTypes(
+    model: string,
+  ): ResolvedModelConfig | undefined {
+    const modelsConfig = this.config.getModelsConfig();
+    const allAuthTypes: AuthType[] = [
+      AuthType.QWEN_OAUTH,
+      AuthType.USE_OPENAI,
+      AuthType.USE_VERTEX_AI,
+      AuthType.USE_ANTHROPIC,
+      AuthType.USE_GEMINI,
+    ];
+
+    // Try the main authType first for early exit
+    const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
+    if (mainAuthType) {
+      const resolved = modelsConfig.getResolvedModel(mainAuthType, model);
+      if (resolved) return resolved;
+    }
+
+    for (const authType of allAuthTypes) {
+      if (authType === mainAuthType) continue;
+      const resolved = modelsConfig.getResolvedModel(authType, model);
+      if (resolved) return resolved;
+    }
+
+    return undefined;
+  }
+
+  /**
    * Resolve the authType for a given model without creating a full generator.
    * Used by retry logic to ensure provider-specific checks (e.g. QWEN_OAUTH
    * quota detection) reference the correct provider.
    */
   private createRetryAuthTypeForModel(model: string): string | undefined {
-    const authType =
-      this.config.getContentGeneratorConfig()?.authType ?? AuthType.USE_OPENAI;
-    const resolvedModel = this.config
-      .getModelsConfig()
-      .getResolvedModel(authType, model);
-    return resolvedModel?.authType;
+    return this.resolveModelAcrossAuthTypes(model)?.authType;
   }
 
   private async createContentGeneratorForModel(
     model: string,
   ): Promise<ContentGenerator> {
     try {
-      const authType =
-        this.config.getContentGeneratorConfig()?.authType ??
-        AuthType.USE_OPENAI;
-      const resolvedModel = this.config
-        .getModelsConfig()
-        .getResolvedModel(authType, model);
+      const resolvedModel = this.resolveModelAcrossAuthTypes(model);
 
       if (!resolvedModel) {
         debugLogger.debug(
-          `Model "${model}" not found in registry for authType "${authType}", falling back to main generator.`,
+          `Model "${model}" not found in registry across all authTypes, falling back to main generator.`,
         );
         return this.getContentGeneratorOrFail();
       }
