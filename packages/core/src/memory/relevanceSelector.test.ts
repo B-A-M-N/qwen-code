@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSideQuery } from '../utils/sideQuery.js';
+import type { Config } from '../config/config.js';
 import type { ScannedAutoMemoryDocument } from './scan.js';
 import { selectRelevantAutoMemoryDocumentsByModel } from './relevanceSelector.js';
 
@@ -37,9 +38,9 @@ const docs: ScannedAutoMemoryDocument[] = [
 ];
 
 describe('selectRelevantAutoMemoryDocumentsByModel', () => {
-  const mockConfig = {} as Parameters<
-    typeof selectRelevantAutoMemoryDocumentsByModel
-  >[0];
+  const mockConfig = {
+    getFastModel: vi.fn().mockReturnValue(undefined),
+  } as unknown as Config;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -122,6 +123,52 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
       mockConfig,
       expect.objectContaining({
         abortSignal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('passes the fast model to runSideQuery when configured', async () => {
+    vi.mocked(mockConfig.getFastModel).mockReturnValue('fast-flash-model');
+    vi.mocked(runSideQuery).mockResolvedValue({
+      selected_memories: ['reference.md'],
+    });
+
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check the latency dashboard',
+      docs,
+      2,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledWith(
+      mockConfig,
+      expect.objectContaining({
+        purpose: 'auto-memory-recall',
+        model: 'fast-flash-model',
+        config: { temperature: 0 },
+      }),
+    );
+  });
+
+  it('passes undefined model when no fast model is configured', async () => {
+    vi.mocked(mockConfig.getFastModel).mockReturnValue(undefined);
+    vi.mocked(runSideQuery).mockResolvedValue({
+      selected_memories: ['reference.md'],
+    });
+
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check the latency dashboard',
+      docs,
+      2,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledWith(
+      mockConfig,
+      expect.objectContaining({
+        purpose: 'auto-memory-recall',
+        model: undefined,
+        config: { temperature: 0 },
       }),
     );
   });
