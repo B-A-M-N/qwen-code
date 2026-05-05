@@ -393,4 +393,49 @@ describe('McpClientManager', () => {
     expect(secondClient.connect).toHaveBeenCalledOnce();
     expect(secondClient.discover).toHaveBeenCalledOnce();
   });
+
+  it('should disconnect failed client and clean up when discoverMcpToolsForServer fails', async () => {
+    const failedClient = {
+      connect: vi.fn().mockRejectedValue(new Error('connection refused')),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn(),
+    };
+
+    vi.mocked(McpClient).mockReturnValue(failedClient as unknown as McpClient);
+
+    const mockConfig = {
+      isTrustedFolder: () => true,
+      getMcpServers: () => ({ 'test-server': {} }),
+      getMcpServerCommand: () => undefined,
+      getPromptRegistry: () => ({}) as PromptRegistry,
+      getWorkspaceContext: () => ({}) as WorkspaceContext,
+      getDebugMode: () => false,
+    } as unknown as Config;
+    const manager = new McpClientManager(mockConfig, {} as ToolRegistry);
+
+    await manager.discoverMcpToolsForServer('test-server', {
+      isTrustedFolder: () => true,
+    } as unknown as Config);
+
+    // The catch block should disconnect the failed client before deleting it.
+    expect(failedClient.disconnect).toHaveBeenCalledOnce();
+
+    // After failure cleanup, a subsequent discovery should proceed (in-flight
+    // tracking was cleared and client was removed).
+    const secondClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      discover: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn(),
+    };
+    vi.mocked(McpClient).mockReturnValue(secondClient as unknown as McpClient);
+
+    await manager.discoverMcpToolsForServer('test-server', {
+      isTrustedFolder: () => true,
+    } as unknown as Config);
+
+    expect(secondClient.connect).toHaveBeenCalledOnce();
+    expect(secondClient.discover).toHaveBeenCalledOnce();
+  });
 });
