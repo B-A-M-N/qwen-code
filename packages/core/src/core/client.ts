@@ -22,6 +22,7 @@ const debugLogger = createDebugLogger('CLIENT');
 
 // Core modules
 import type { ContentGenerator } from './contentGenerator.js';
+import { AuthType, createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
 import {
   getArenaSystemReminder,
@@ -45,6 +46,9 @@ import {
   COMPRESSION_TOKEN_THRESHOLD,
 } from '../services/chatCompressionService.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
+
+// Models
+import { buildAgentContentGeneratorConfig } from '../models/content-generator-config.js';
 
 // Tools
 import type { RelevantAutoMemoryPromptResult } from '../memory/manager.js';
@@ -136,6 +140,14 @@ export class GeminiClient {
   private forceFullIdeContext = true;
 
   /**
+   * Cache of per-model ContentGenerators keyed by model ID.
+   * Avoids rebuilding the generator (SDK instantiation, config resolution)
+   * on every side query (recap, title, tool summary).
+   * Cleared on config changes that could affect model settings.
+   */
+  private perModelGeneratorCache = new Map<string, ContentGenerator>();
+
+  /**
    * At any point in this conversation, was compression triggered without
    * being forced and did it fail?
    */
@@ -206,47 +218,15 @@ export class GeminiClient {
 
   private stripOrphanedUserEntriesFromHistory() {
     this.getChat().stripOrphanedUserEntriesFromHistory();
-    // Stripped trailing user entries can include read_file
-    // functionResponses from a failed-then-retried request. The
-    // FileReadCache would still record those reads, so the retry's
-    // re-issued Read could hit the file_unchanged placeholder while
-    // the model has nothing to fall back on. Clear to be safe.
-    debugLogger.debug(
-      '[FILE_READ_CACHE] clear after stripOrphanedUserEntriesFromHistory',
-    );
-    this.config.getFileReadCache().clear();
   }
 
   setHistory(history: Content[]) {
     this.getChat().setHistory(history);
-    // Replacing history wholesale drops any prior read_file tool
-    // results the FileReadCache still believes the model has seen.
-    // Without clearing, a follow-up Read of an unchanged file would
-    // return the file_unchanged placeholder for bytes that no longer
-    // exist in the new history.
-    debugLogger.debug('[FILE_READ_CACHE] clear after setHistory');
-    this.config.getFileReadCache().clear();
     this.forceFullIdeContext = true;
   }
 
   truncateHistory(keepCount: number) {
-    // Use the O(1) length getter rather than getHistory() — the latter
-    // structuredClone's the entire history just to read .length, which
-    // gets expensive in long-running sessions.
-    const prevLen = this.getChat().getHistoryLength();
     this.getChat().truncateHistory(keepCount);
-    // Decide whether to invalidate based on the *actual* post-truncate
-    // length, not on the keepCount argument. Comparing keepCount alone
-    // misses pathological inputs (e.g. NaN: slice(0, NaN) returns [],
-    // emptying history, but `NaN < prevLen` is false and would skip
-    // the clear, reintroducing the file_unchanged placeholder bug).
-    const newLen = this.getChat().getHistoryLength();
-    if (newLen < prevLen) {
-      debugLogger.debug(
-        `[FILE_READ_CACHE] clear after truncateHistory(keep=${keepCount}, prev=${prevLen}, new=${newLen})`,
-      );
-      this.config.getFileReadCache().clear();
-    }
     this.forceFullIdeContext = true;
   }
 
@@ -265,12 +245,6 @@ export class GeminiClient {
   async resetChat(): Promise<void> {
     this.surfacedRelevantAutoMemoryPaths.clear();
     this.lastApiCompletionTimestamp = null;
-    // startChat() rewrites the chat to its initial state. Any prior
-    // read_file tool results the FileReadCache still tracks are no
-    // longer in history, so a follow-up Read would serve a placeholder
-    // pointing at content the model can no longer retrieve.
-    debugLogger.debug('[FILE_READ_CACHE] clear after resetChat');
-    this.config.getFileReadCache().clear();
     await this.startChat();
   }
 
@@ -732,16 +706,6 @@ export class GeminiClient {
       );
       if (mcResult.meta) {
         this.getChat().setHistory(mcResult.history);
-        // Microcompaction replaces old compactable tool outputs
-        // (including read_file) with a placeholder, but the
-        // FileReadCache still records the prior full Reads as "seen in
-        // this conversation". A follow-up Read of an unchanged file
-        // would then return the file_unchanged placeholder pointing at
-        // bytes the model can no longer retrieve from history. Drop the
-        // cache so post-microcompaction Reads re-emit the bytes,
-        // mirroring the post-compaction clear in tryCompressChat.
-        debugLogger.debug('[FILE_READ_CACHE] clear after microcompaction');
-        this.config.getFileReadCache().clear();
         const m = mcResult.meta;
         debugLogger.debug(
           `[TIME-BASED MC] gap ${m.gapMinutes}min > ${m.thresholdMinutes}min, ` +
@@ -1136,10 +1100,31 @@ export class GeminiClient {
         systemInstruction: finalSystemInstruction,
       };
 
+      // When the requested model differs from the main model (e.g. fast model
+      // side queries for session recap / title / summary), resolve the target
+      // model's own ContentGeneratorConfig so that per-model settings like
+      // extra_body, samplingParams, and reasoning are not inherited from the
+      // main model's config.
+      const mainModel = this.config.getModel() ?? model;
+      const isPerModel = model !== mainModel;
+
+      // Resolve the authType for retry logic. When using a per-model content
+      // generator (e.g. fast model side queries), the retry authType must match
+      // the target model's provider, not the main session's provider. This
+      // ensures QWEN_OAUTH quota detection checks against the right provider.
+      const retryAuthType = isPerModel
+        ? (this.createRetryAuthTypeForModel(model) ??
+          this.config.getContentGeneratorConfig()?.authType ??
+          AuthType.USE_OPENAI)
+        : this.config.getContentGeneratorConfig()?.authType;
+
+      const contentGenerator = isPerModel
+        ? await this.createContentGeneratorForModel(model)
+        : this.getContentGeneratorOrFail();
       const apiCall = () => {
         currentAttemptModel = model;
 
-        return this.getContentGeneratorOrFail().generateContent(
+        return contentGenerator.generateContent(
           {
             model,
             config: requestConfig,
@@ -1149,7 +1134,7 @@ export class GeminiClient {
         );
       };
       const result = await retryWithBackoff(apiCall, {
-        authType: this.config.getContentGeneratorConfig()?.authType,
+        authType: retryAuthType,
         persistentMode: isUnattendedMode(),
         signal: abortSignal,
         heartbeatFn: (info) => {
@@ -1176,6 +1161,75 @@ export class GeminiClient {
       throw new Error(
         `Failed to generate content with model ${currentAttemptModel}: ${getErrorMessage(error)}`,
       );
+    }
+  }
+
+  /**
+   * Resolve the authType for a given model without creating a full generator.
+   * Used by retry logic to ensure provider-specific checks (e.g. QWEN_OAUTH
+   * quota detection) reference the correct provider.
+   */
+  private createRetryAuthTypeForModel(model: string): string | undefined {
+    const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
+    return this.config
+      .getModelsConfig()
+      .getResolvedModelAcrossAuthTypes(model, mainAuthType)?.authType;
+  }
+
+  /**
+   * Return a ContentGenerator for a specific model (e.g. the fast model) with
+   * its own per-model settings from modelProviders.  This prevents the main
+   * model's extra_body / samplingParams / reasoning from leaking into side
+   * queries that target a different model.
+   *
+   * Falls back to the main content generator when the target model is not in
+   * the registry or when creating a dedicated generator fails (e.g. in test
+   * environments without full auth setup).
+   *
+   * Results are cached by model ID to avoid rebuilding the generator
+   * (SDK instantiation, config resolution) on every side query.
+   */
+  private async createContentGeneratorForModel(
+    model: string,
+  ): Promise<ContentGenerator> {
+    // Check cache first
+    const cached = this.perModelGeneratorCache.get(model);
+    if (cached) return cached;
+
+    try {
+      const mainAuthType = this.config.getContentGeneratorConfig()?.authType;
+      const resolvedModel = this.config
+        .getModelsConfig()
+        .getResolvedModelAcrossAuthTypes(model, mainAuthType);
+
+      if (!resolvedModel) {
+        debugLogger.warn(
+          `Model "${model}" not found in registry across all authTypes, falling back to main generator.`,
+        );
+        return this.getContentGeneratorOrFail();
+      }
+
+      const targetConfig = buildAgentContentGeneratorConfig(
+        this.config,
+        model,
+        {
+          authType: resolvedModel.authType,
+          apiKey: resolvedModel.envKey
+            ? (process.env[resolvedModel.envKey] ?? undefined)
+            : undefined,
+          baseUrl: resolvedModel.baseUrl,
+        },
+      );
+
+      const generator = await createContentGenerator(targetConfig, this.config);
+      this.perModelGeneratorCache.set(model, generator);
+      return generator;
+    } catch (err: unknown) {
+      debugLogger.warn(
+        `Failed to create content generator for model "${model}", falling back to main generator.`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return this.getContentGeneratorOrFail();
     }
   }
 
@@ -1214,7 +1268,6 @@ export class GeminiClient {
         // placeholder pointing at content the model can no longer
         // retrieve from its own context. Clear the cache so post-
         // compaction Reads re-emit the bytes.
-        debugLogger.debug('[FILE_READ_CACHE] clear after tryCompressChat');
         this.config.getFileReadCache().clear();
         uiTelemetryService.setLastPromptTokenCount(info.newTokenCount);
         this.forceFullIdeContext = true;
