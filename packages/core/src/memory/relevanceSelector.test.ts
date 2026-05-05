@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config } from '../config/config.js';
+// eslint-disable-next-line import/no-internal-modules -- Test must mock the exact side-query module path used by relevanceSelector.
 import { runSideQuery } from '../utils/sideQuery.js';
 import type { ScannedAutoMemoryDocument } from './scan.js';
 import { selectRelevantAutoMemoryDocumentsByModel } from './relevanceSelector.js';
@@ -38,7 +38,9 @@ const docs: ScannedAutoMemoryDocument[] = [
 ];
 
 describe('selectRelevantAutoMemoryDocumentsByModel', () => {
-  const mockConfig = {} as Config;
+  const mockConfig = {} as Parameters<
+    typeof selectRelevantAutoMemoryDocumentsByModel
+  >[0];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,33 +79,32 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
   });
 
   it('forwards caller abort signal to runSideQuery combined with timeout', async () => {
-    vi.mocked(runSideQuery).mockResolvedValue({
-      selected_memories: ['user.md'],
+    const callerController = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+
+    vi.mocked(runSideQuery).mockImplementation(async (_config, opts) => {
+      capturedSignal = opts.abortSignal;
+      return { selected_memories: [] };
     });
 
-    const callerSignal = new AbortController().signal;
     await selectRelevantAutoMemoryDocumentsByModel(
       mockConfig,
       'check preferences',
       docs,
       2,
       [],
-      callerSignal,
+      callerController.signal,
     );
 
-    expect(runSideQuery).toHaveBeenCalledWith(
-      mockConfig,
-      expect.objectContaining({
-        abortSignal: expect.any(AbortSignal),
-      }),
-    );
+    expect(runSideQuery).toHaveBeenCalledTimes(1);
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(false);
 
-    // Verify the abort signal is a combined signal (AbortSignal.any)
-    const callArgs = vi.mocked(runSideQuery).mock.calls[0][1];
-    const passedSignal = callArgs.abortSignal;
-    // When callerAbortSignal is provided, it should be an AbortSignal from AbortSignal.any
-    // which is still an AbortSignal instance
-    expect(passedSignal).toBeInstanceOf(AbortSignal);
+    callerController.abort();
+
+    await vi.waitFor(() => {
+      expect(capturedSignal!.aborted).toBe(true);
+    });
   });
 
   it('uses timeout-only abort signal when no caller signal provided', async () => {
