@@ -13,6 +13,15 @@ import type {
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
 import { getPersistScopeForModelSelection } from '../../config/modelProvidersScope.js';
+import {
+  fetchWithTimeout,
+  isPrivateIp,
+  formatFetchErrorForUser,
+  createDebugLogger,
+} from '@qwen-code/qwen-code-core';
+
+const debugLogger = createDebugLogger('MODEL_COMMAND');
+const FETCH_TIMEOUT_MS = 30_000;
 
 export const modelCommand: SlashCommand = {
   name: 'model',
@@ -23,17 +32,28 @@ export const modelCommand: SlashCommand = {
   kind: CommandKind.BUILT_IN,
   supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
   completion: async (_context, partialArg) => {
-    if (partialArg && '--fast'.startsWith(partialArg)) {
-      return [
-        {
-          value: '--fast',
-          description: t(
-            'Set a lighter model for prompt suggestions and speculative execution',
-          ),
-        },
-      ];
+    const completions = [];
+
+    // Always offer --fast and list when no partial arg, or filter by match
+    if (!partialArg || '--fast'.startsWith(partialArg)) {
+      completions.push({
+        value: '--fast',
+        description: t(
+          'Set a lighter model for prompt suggestions and speculative execution',
+        ),
+      });
     }
-    return null;
+
+    if (!partialArg || 'list'.startsWith(partialArg)) {
+      completions.push({
+        value: 'list',
+        description: t(
+          'List available models from the configured API endpoint',
+        ),
+      });
+    }
+
+    return completions.length > 0 ? completions : null;
   },
   action: async (
     context: CommandContext,
@@ -148,4 +168,158 @@ export const modelCommand: SlashCommand = {
       dialog: 'model',
     };
   },
+  subCommands: [
+    {
+      name: 'list',
+      get description() {
+        return t('List available models from the configured API endpoint');
+      },
+      kind: CommandKind.BUILT_IN,
+      supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
+      action: async (context: CommandContext): Promise<MessageActionReturn> => {
+        const { services } = context;
+        const { config } = services;
+
+        if (!config) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t('Configuration not available.'),
+          };
+        }
+
+        const contentGeneratorConfig = config.getContentGeneratorConfig();
+        if (!contentGeneratorConfig) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t('Content generator configuration not available.'),
+          };
+        }
+
+        const { baseUrl, apiKey } = contentGeneratorConfig;
+
+        if (!baseUrl) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t(
+              'No baseUrl configured. Please configure modelProviders or set the API endpoint.',
+            ),
+          };
+        }
+
+        try {
+          const models = await fetchModels(baseUrl, apiKey);
+          if (models.length === 0) {
+            return {
+              type: 'message',
+              messageType: 'info',
+              content: t('No models found from the configured endpoint.'),
+            };
+          }
+          const output = models.join('\n');
+          return {
+            type: 'message',
+            messageType: 'info',
+            content: output,
+          };
+        } catch (error) {
+          const errorMessage = formatFetchErrorForUser(error, { url: baseUrl });
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: `${t('Failed to fetch models')}: ${errorMessage}`,
+          };
+        }
+      },
+    },
+  ],
 };
+
+/**
+ * Fetch available models from the OpenAI-compatible /models endpoint.
+ * Returns an array of model ID strings.
+ * Exported for testing purposes.
+ */
+export async function fetchModels(
+  baseUrl: string,
+  apiKey?: string,
+): Promise<string[]> {
+  // Validate URL
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error('Invalid baseUrl: must be a valid URL');
+  }
+
+  // Enforce HTTPS
+  if (parsed.protocol !== 'https:') {
+    throw new Error('baseUrl must use HTTPS');
+  }
+
+  // SSRF protection: block private IPs and localhost
+  const hostname = parsed.hostname;
+  if (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1'
+  ) {
+    throw new Error('baseUrl resolves to a private IP address (SSRF check)');
+  }
+  if (isPrivateIp(baseUrl)) {
+    throw new Error('baseUrl resolves to a private IP address (SSRF check)');
+  }
+
+  // Normalize baseUrl to avoid double slash (e.g., "https://api.openai.com/v1/")
+  const normalizedUrl = baseUrl.replace(/\/+$/, '');
+  const url = `${normalizedUrl}/models`;
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  debugLogger.debug('Fetching models from', url);
+
+  const startTime = Date.now();
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, FETCH_TIMEOUT_MS, headers);
+  } catch (error) {
+    debugLogger.debug('Models request failed', { error, url });
+    throw error;
+  }
+
+  debugLogger.debug('Models response', {
+    status: response.status,
+    duration: Date.now() - startTime,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    // Sanitize API key from error messages to prevent leakage
+    const truncated = errorText.slice(0, 500);
+    const sanitized = apiKey
+      ? truncated.replaceAll(apiKey, '[REDACTED]')
+      : truncated;
+    throw new Error(`Request failed (${response.status}): ${sanitized}`);
+  }
+
+  const data = (await response.json()) as {
+    data?: Array<{ id?: unknown; [key: string]: unknown }>;
+  };
+
+  if (!Array.isArray(data.data)) {
+    throw new Error('Unexpected response format: missing data array');
+  }
+
+  // Type-check model IDs: only accept non-empty strings
+  return data.data
+    .map((model) => model.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+}

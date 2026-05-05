@@ -1035,6 +1035,11 @@ export default {
   'Authentication type not available.': '認證類型不可用',
   'No models available for the current authentication type ({{authType}}).':
     '當前認證類型 ({{authType}}) 沒有可用的模型',
+  'List available models from the configured API endpoint':
+    '列出已設定 API 端點中的可用模型',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    '未設定基礎 URL。請設定 modelProviders 或指定 API 端點。',
+  'Failed to fetch models': '無法取得模型列表',
   'Starting a new session, resetting chat, and clearing terminal.':
     '正在開始新會話，重置聊天並清屏。',
   'Starting a new session and clearing.': '正在開始新會話並清屏。',

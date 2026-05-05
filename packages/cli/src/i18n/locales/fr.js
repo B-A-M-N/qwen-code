@@ -1199,6 +1199,11 @@ export default {
   // ============================================================================
   'Already compressing, wait for previous request to complete':
     'Compression déjà en cours, attendez que la demande précédente se termine',
+  'List available models from the configured API endpoint':
+    'Lister les modèles disponibles depuis le point de terminaison API configuré',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    'Aucune URL de base configurée. Veuillez configurer modelProviders ou définir le point de terminaison API.',
+  'Failed to fetch models': 'Échec de la récupération des modèles',
   'Failed to compress chat history.':
     "Échec de la compression de l'historique du chat.",
   'Failed to compress chat history: {{error}}':

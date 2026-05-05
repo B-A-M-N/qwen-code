@@ -1223,6 +1223,11 @@ export default {
   // ============================================================================
   'Starting a new session, resetting chat, and clearing terminal.':
     'Iniciant una nova sessió, restablint el xat i netejant el terminal.',
+  'List available models from the configured API endpoint':
+    'Llista els models disponibles del punt de connexió API configurat',
+  'No baseUrl configured. Please configure modelProviders or set the API endpoint.':
+    "No s'ha configurat cap URL base. Configureu modelProviders o establiu el punt de connexió API.",
+  'Failed to fetch models': "No s'han pogut obtenir els models",
   'Starting a new session and clearing.':
     'Iniciant una nova sessió i netejant.',
 
