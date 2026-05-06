@@ -18,8 +18,11 @@ import {
   isOpenRouterConfig,
   mergeOpenRouterConfigs,
 } from '../../commands/auth/openrouterOAuth.js';
+import {
+  fetchAnthropicModels,
+} from '../../commands/auth/anthropic.js';
 
-export const MANAGE_MODELS_SOURCES = ['openrouter'] as const;
+export const MANAGE_MODELS_SOURCES = ['openrouter', 'anthropic'] as const;
 
 export type ManageModelsSource = (typeof MANAGE_MODELS_SOURCES)[number];
 
@@ -101,6 +104,8 @@ function createEntry(
 
 export async function fetchManageModelsCatalog(
   source: ManageModelsSource,
+  apiKey?: string,
+  baseUrl?: string,
 ): Promise<ManageModelsCatalog> {
   switch (source) {
     case 'openrouter': {
@@ -111,6 +116,20 @@ export async function fetchManageModelsCatalog(
         description:
           'Browse the latest OpenRouter model catalog and choose which models are enabled locally.',
         authType: AuthType.USE_OPENAI,
+        entries: models.map((model) => createEntry(source, model)),
+      };
+    }
+    case 'anthropic': {
+      if (!apiKey) {
+        throw new Error('API key is required for Anthropic model listing.');
+      }
+      const models = await fetchAnthropicModels(apiKey, baseUrl);
+      return {
+        source,
+        title: 'Anthropic',
+        description:
+          'Browse available Anthropic models and choose which models are enabled locally.',
+        authType: AuthType.USE_ANTHROPIC,
         entries: models.map((model) => createEntry(source, model)),
       };
     }
@@ -126,13 +145,18 @@ export function getEnabledModelIdsForSource(
   const modelProviders = settings.merged.modelProviders as
     | ModelProvidersConfig
     | undefined;
-  const openaiConfigs = modelProviders?.[AuthType.USE_OPENAI] || [];
 
   switch (source) {
-    case 'openrouter':
+    case 'openrouter': {
+      const openaiConfigs = modelProviders?.[AuthType.USE_OPENAI] || [];
       return openaiConfigs
         .filter((config) => isOpenRouterConfig(config))
         .map((config) => config.id);
+    }
+    case 'anthropic': {
+      const anthropicConfigs = modelProviders?.[AuthType.USE_ANTHROPIC] || [];
+      return anthropicConfigs.map((config) => config.id);
+    }
     default:
       return [];
   }
@@ -149,11 +173,11 @@ export async function saveManageModelsSelection(params: {
   const mergedModelProviders = settings.merged.modelProviders as
     | ModelProvidersConfig
     | undefined;
-  const existingOpenAIConfigs =
-    mergedModelProviders?.[AuthType.USE_OPENAI] || [];
 
   switch (source) {
     case 'openrouter': {
+      const existingOpenAIConfigs =
+        mergedModelProviders?.[AuthType.USE_OPENAI] || [];
       const updatedConfigs = mergeOpenRouterConfigs(
         existingOpenAIConfigs,
         selectedModels,
@@ -201,6 +225,50 @@ export async function saveManageModelsSelection(params: {
 
       return {
         updatedConfigs,
+        selectedIds,
+        activeModelId,
+      };
+    }
+    case 'anthropic': {
+      if (selectedModels.length === 0) {
+        throw new Error(
+          'At least one Anthropic model must remain enabled.',
+        );
+      }
+
+      settings.setValue(
+        persistScope,
+        `modelProviders.${AuthType.USE_ANTHROPIC}`,
+        selectedModels,
+      );
+
+      const selectedIds = selectedModels.map((model) => model.id);
+      const currentAuthType = config.getContentGeneratorConfig()?.authType;
+      const currentModelId = config.getModel();
+      const currentModelStillAvailable = currentModelId
+        ? selectedModels.some((model) => model.id === currentModelId)
+        : false;
+
+      let activeModelId = currentModelId;
+      if (!currentModelStillAvailable) {
+        activeModelId = selectedModels[0]?.id;
+        if (activeModelId) {
+          settings.setValue(persistScope, 'model.name', activeModelId);
+        }
+      }
+
+      const updatedModelProviders: ModelProvidersConfig = {
+        ...(mergedModelProviders || {}),
+        [AuthType.USE_ANTHROPIC]: selectedModels,
+      };
+      config.reloadModelProvidersConfig(updatedModelProviders);
+
+      if (currentAuthType === AuthType.USE_ANTHROPIC) {
+        await config.refreshAuth(AuthType.USE_ANTHROPIC);
+      }
+
+      return {
+        updatedConfigs: selectedModels,
         selectedIds,
         activeModelId,
       };

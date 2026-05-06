@@ -37,10 +37,8 @@ export type FilterMode = 'all' | 'enabled' | 'free' | 'vision';
 const MAX_VISIBLE_MODELS = 12;
 const MANAGE_MODELS_TABS = [
   { source: 'openrouter', label: 'OpenRouter', enabled: true },
-  { source: 'modelstudio', label: 'ModelStudio', enabled: false },
+  { source: 'anthropic', label: 'Anthropic', enabled: true },
 ] as const;
-
-type ManageModelsTabSource = (typeof MANAGE_MODELS_TABS)[number]['source'];
 
 export function buildModelLabel(entry: ManageModelsCatalogEntry): string {
   return entry.label;
@@ -135,9 +133,9 @@ export function getNextFocusMode(
 }
 
 export function getNextEnabledTabSource(
-  current: ManageModelsTabSource,
+  current: ManageModelsSource,
   direction: 'left' | 'right',
-): ManageModelsTabSource {
+): ManageModelsSource {
   const currentIndex = MANAGE_MODELS_TABS.findIndex(
     (tab) => tab.source === current,
   );
@@ -164,8 +162,8 @@ export function ManageModelsDialog({
 }: ManageModelsDialogProps): React.JSX.Element {
   const settings = useSettings();
   const [activeTabSource, setActiveTabSource] =
-    useState<ManageModelsTabSource>('openrouter');
-  const source: ManageModelsSource = 'openrouter';
+    useState<ManageModelsSource>('openrouter');
+  const source = activeTabSource;
 
   const [status, setStatus] = useState<DialogStatus>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +181,16 @@ export function ManageModelsDialog({
     setStatusMessage(null);
 
     try {
-      const nextCatalog = await fetchManageModelsCatalog(source);
+      let apiKey: string | undefined;
+      let baseUrl: string | undefined;
+
+      if (source === 'anthropic') {
+        const contentGenConfig = config.getContentGeneratorConfig();
+        apiKey = contentGenConfig?.apiKey || process.env['ANTHROPIC_API_KEY'];
+        baseUrl = contentGenConfig?.baseUrl;
+      }
+
+      const nextCatalog = await fetchManageModelsCatalog(source, apiKey, baseUrl);
       const enabledIds = getEnabledModelIdsForSource(source, settings);
       setCatalog(nextCatalog);
       setSelectedIds(enabledIds);
@@ -195,7 +202,7 @@ export function ManageModelsDialog({
       );
       setStatus('error');
     }
-  }, [settings, source]);
+  }, [settings, source, config]);
 
   useEffect(() => {
     void loadCatalog();
@@ -497,7 +504,7 @@ export function ManageModelsDialog({
         <Box marginTop={1}>
           <Text color={theme.text.secondary}>
             {status === 'loading'
-              ? 'Loading OpenRouter catalog…'
+              ? `Loading ${source === 'anthropic' ? 'Anthropic' : 'OpenRouter'} catalog…`
               : 'Saving enabled models…'}
           </Text>
         </Box>
