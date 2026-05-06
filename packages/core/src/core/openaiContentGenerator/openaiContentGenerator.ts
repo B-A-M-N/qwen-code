@@ -162,6 +162,24 @@ export class OpenAIContentGenerator implements ContentGenerator {
     }
   }
 
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await this.pipeline.client.models.list();
+      return response.data.map((model) => model.id);
+    } catch (error) {
+      debugLogger.warn('OpenAI API Models List Error:', error);
+      // Some OpenAI-compatible providers do not implement the /models endpoint.
+      // We return an empty list or throw a clearer error.
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('404') || message.includes('not found')) {
+        throw new Error(
+          'Model listing is not supported by this provider endpoint.',
+        );
+      }
+      throw new Error(`Failed to fetch models from provider: ${message}`);
+    }
+  }
+
   useSummarizedThinking(): boolean {
     return false;
   }

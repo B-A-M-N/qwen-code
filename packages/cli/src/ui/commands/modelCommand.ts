@@ -205,4 +205,96 @@ export const modelCommand: SlashCommand = {
       dialog: 'model',
     };
   },
+  subCommands: [
+    {
+      name: 'list',
+      get description() {
+        return t('List available models from the configured API endpoint');
+      },
+      kind: CommandKind.BUILT_IN,
+      supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
+      action: async (
+        context: CommandContext,
+        _args: string,
+      ): Promise<MessageActionReturn> => {
+        const { services } = context;
+        const { config } = services;
+
+        if (!config) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t('Configuration not available.'),
+          };
+        }
+
+        const generator = config.getContentGenerator();
+        if (!generator) {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: t(
+              'Content generator not initialized. Please configure a provider first.',
+            ),
+          };
+        }
+
+        try {
+          const models = await generator.listModels();
+
+          if (models.length === 0) {
+            return {
+              type: 'message',
+              messageType: 'info',
+              content: t('No models found from the configured endpoint.'),
+            };
+          }
+
+          // Filter models based on args (case-insensitive substring match)
+          const filter = _args.trim().toLowerCase();
+          const filteredModels = filter
+            ? models.filter((m) => m.toLowerCase().includes(filter))
+            : models;
+
+          if (filteredModels.length === 0) {
+            return {
+              type: 'message',
+              messageType: 'info',
+              content: t('No models found matching: {{filter}}', { filter }),
+            };
+          }
+
+          // Truncate list to prevent terminal flood (max 50)
+          const MAX_MODELS = 50;
+          const displayModels = filteredModels.slice(0, MAX_MODELS);
+          let content = displayModels.join('\n');
+          if (filteredModels.length > MAX_MODELS) {
+            content += `\n\n${t('(some models truncated...)')}`;
+          }
+
+          return {
+            type: 'message',
+            messageType: 'info',
+            content,
+          };
+        } catch (error) {
+          let errorMessage: string;
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            const isTimeout = !context.abortSignal?.aborted;
+            errorMessage = isTimeout
+              ? t('Request timed out. The endpoint may be slow or unreachable.')
+              : t('Request cancelled.');
+          } else {
+            errorMessage =
+              error instanceof Error ? error.message : String(error);
+          }
+          return {
+            type: 'message',
+            messageType: 'error',
+            content: `${t('Failed to fetch models:')} ${errorMessage}`,
+          };
+        }
+      },
+    },
+  ],
 };

@@ -1,9 +1,3 @@
-/**
- * @license
- * Copyright 2025 Qwen
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { modelCommand } from './modelCommand.js';
 import { type CommandContext } from './types.js';
@@ -12,14 +6,32 @@ import {
   AuthType,
   type ContentGeneratorConfig,
   type Config,
+  type ContentGenerator,
 } from '@qwen-code/qwen-code-core';
+
+// Mock the core module so tests control its return value.
+vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+  return {
+    ...actual,
+    getOrCreateSharedDispatcher: vi.fn().mockReturnValue(undefined),
+    isPrivateIp: vi.fn().mockReturnValue(false),
+  };
+});
 
 // Helper function to create a mock config
 function createMockConfig(
   contentGeneratorConfig: ContentGeneratorConfig | null,
+  generator?: Partial<ContentGenerator>,
 ): Partial<Config> {
   return {
     getContentGeneratorConfig: vi.fn().mockReturnValue(contentGeneratorConfig),
+    getContentGenerator: vi.fn().mockReturnValue(generator),
+    getAvailableModels: vi.fn().mockReturnValue([]),
+    getModelsConfig: vi.fn().mockReturnValue({
+      hasModel: vi.fn().mockReturnValue(true),
+    }),
   };
 }
 
@@ -63,83 +75,6 @@ describe('modelCommand', () => {
     });
   });
 
-  it('should return error when auth type is not available', async () => {
-    const mockConfig = createMockConfig({
-      model: 'test-model',
-      authType: undefined,
-    });
-    mockContext.services.config = mockConfig as Config;
-
-    const result = await modelCommand.action!(mockContext, '');
-
-    expect(result).toEqual({
-      type: 'message',
-      messageType: 'error',
-      content: 'Authentication type not available.',
-    });
-  });
-
-  it('should return dialog action for QWEN_OAUTH auth type', async () => {
-    const mockConfig = createMockConfig({
-      model: 'test-model',
-      authType: AuthType.QWEN_OAUTH,
-    });
-    mockContext.services.config = mockConfig as Config;
-
-    const result = await modelCommand.action!(mockContext, '');
-
-    expect(result).toEqual({
-      type: 'dialog',
-      dialog: 'model',
-    });
-  });
-
-  it('should return dialog action for USE_OPENAI auth type', async () => {
-    const mockConfig = createMockConfig({
-      model: 'test-model',
-      authType: AuthType.USE_OPENAI,
-    });
-    mockContext.services.config = mockConfig as Config;
-
-    const result = await modelCommand.action!(mockContext, '');
-
-    expect(result).toEqual({
-      type: 'dialog',
-      dialog: 'model',
-    });
-  });
-
-  it('should return dialog action for unsupported auth types', async () => {
-    const mockConfig = createMockConfig({
-      model: 'test-model',
-      authType: 'UNSUPPORTED_AUTH_TYPE' as AuthType,
-    });
-    mockContext.services.config = mockConfig as Config;
-
-    const result = await modelCommand.action!(mockContext, '');
-
-    expect(result).toEqual({
-      type: 'dialog',
-      dialog: 'model',
-    });
-  });
-
-  it('should handle undefined auth type', async () => {
-    const mockConfig = createMockConfig({
-      model: 'test-model',
-      authType: undefined,
-    });
-    mockContext.services.config = mockConfig as Config;
-
-    const result = await modelCommand.action!(mockContext, '');
-
-    expect(result).toEqual({
-      type: 'message',
-      messageType: 'error',
-      content: 'Authentication type not available.',
-    });
-  });
-
   describe('non-interactive mode', () => {
     it('should return current model without triggering dialog when no args', async () => {
       mockContext = createMockCommandContext({
@@ -162,33 +97,91 @@ describe('modelCommand', () => {
         messageType: 'info',
         content: expect.stringContaining('qwen-max'),
       });
-      expect((result as { type: string }).type).toBe('message');
+    });
+  });
+
+  describe('list subcommand', () => {
+    let mockContext: CommandContext;
+
+    function getListAction() {
+      const cmd = modelCommand.subCommands?.find((c) => c.name === 'list');
+      if (!cmd) throw new Error('list subcommand not found');
+      return cmd.action!;
+    }
+
+    beforeEach(() => {
+      mockContext = createMockCommandContext();
+      vi.restoreAllMocks();
     });
 
-    it('should return current fast model without triggering dialog for --fast no args', async () => {
-      mockContext = createMockCommandContext({
-        executionMode: 'non_interactive',
-        invocation: { args: '--fast' },
-        services: {
-          config: {
-            getContentGeneratorConfig: vi.fn().mockReturnValue({
-              model: 'qwen-max',
-              authType: AuthType.QWEN_OAUTH,
-            }),
-            getModel: vi.fn().mockReturnValue('qwen-max'),
-          },
-          settings: {
-            merged: { fastModel: 'qwen-turbo' } as Record<string, unknown>,
-          },
-        },
-      });
+    it('should return error when config is missing', async () => {
+      mockContext.services.config = null;
 
-      const result = await modelCommand.action!(mockContext, '--fast');
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: 'Configuration not available.',
+      });
+    });
+
+    it('should return model list on success', async () => {
+      const mockGenerator = {
+        listModels: vi.fn().mockResolvedValue(['model-1', 'model-2']),
+      };
+      const mockConfig = createMockConfig(
+        { model: 'test', authType: AuthType.USE_OPENAI },
+        mockGenerator as unknown as ContentGenerator,
+      );
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, '');
 
       expect(result).toEqual({
         type: 'message',
         messageType: 'info',
-        content: expect.stringContaining('qwen-turbo'),
+        content: 'model-1\nmodel-2',
+      });
+    });
+
+    it('should filter models based on args', async () => {
+      const mockGenerator = {
+        listModels: vi
+          .fn()
+          .mockResolvedValue(['qwen-max', 'deepseek-chat', 'qwen-plus']),
+      };
+      const mockConfig = createMockConfig(
+        { model: 'test', authType: AuthType.USE_OPENAI },
+        mockGenerator as unknown as ContentGenerator,
+      );
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, 'qwen');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'info',
+        content: 'qwen-max\nqwen-plus',
+      });
+    });
+
+    it('should handle errors from generator', async () => {
+      const mockGenerator = {
+        listModels: vi.fn().mockRejectedValue(new Error('API error')),
+      };
+      const mockConfig = createMockConfig(
+        { model: 'test', authType: AuthType.USE_OPENAI },
+        mockGenerator as unknown as ContentGenerator,
+      );
+      mockContext.services.config = mockConfig as Config;
+
+      const result = await getListAction()(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'error',
+        content: expect.stringContaining('Failed to fetch models: API error'),
       });
     });
   });

@@ -300,6 +300,16 @@ export class GeminiContentGenerator implements ContentGenerator {
     return this.googleGenAI.models.embedContent(request);
   }
 
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await this.googleGenAI.models.listModels();
+      return response.models?.map((model) => model.name) || [];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to fetch models from provider: ${message}`);
+    }
+  }
+
   useSummarizedThinking(): boolean {
     return true;
   }

@@ -201,6 +201,26 @@ export class AnthropicContentGenerator implements ContentGenerator {
     throw new Error('Anthropic does not support embeddings.');
   }
 
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await this.client.models.list();
+      const ids: string[] = [];
+      for await (const model of response) {
+        ids.push(model.id);
+      }
+      return ids;
+    } catch (error) {
+      debugLogger.warn('Anthropic API Models List Error:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('404') || message.includes('not found')) {
+        throw new Error(
+          'Model listing is not supported by this provider endpoint.',
+        );
+      }
+      throw new Error(`Failed to fetch models from provider: ${message}`);
+    }
+  }
+
   useSummarizedThinking(): boolean {
     return false;
   }

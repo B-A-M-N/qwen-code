@@ -539,6 +539,10 @@ export class LoggingContentGenerator implements ContentGenerator {
     return this.wrapped.embedContent(req);
   }
 
+  async listModels(): Promise<string[]> {
+    return this.wrapped.listModels();
+  }
+
   useSummarizedThinking(): boolean {
     return this.wrapped.useSummarizedThinking();
   }
