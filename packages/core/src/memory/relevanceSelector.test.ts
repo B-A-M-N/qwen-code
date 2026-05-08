@@ -5,8 +5,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config } from '../config/config.js';
 import { runSideQuery } from '../utils/sideQuery.js';
+import type { Config } from '../config/config.js';
 import type { ScannedAutoMemoryDocument } from './scan.js';
 import { selectRelevantAutoMemoryDocumentsByModel } from './relevanceSelector.js';
 
@@ -43,22 +43,24 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
   } as unknown as Config;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('returns documents chosen by the side-query selector', async () => {
     vi.mocked(runSideQuery).mockResolvedValue({
-      selected_memories: ['reference.md'],
+      selected_memories: ['user.md'],
     });
 
-    const selected = await selectRelevantAutoMemoryDocumentsByModel(
+    const result = await selectRelevantAutoMemoryDocumentsByModel(
       mockConfig,
-      'check the latency dashboard',
+      'check preferences',
       docs,
       2,
+      [],
     );
 
-    expect(selected).toEqual([docs[1]]);
+    expect(result).toEqual([docs[0]]);
+
     expect(runSideQuery).toHaveBeenCalledWith(
       mockConfig,
       expect.objectContaining({
@@ -76,6 +78,55 @@ describe('selectRelevantAutoMemoryDocumentsByModel', () => {
       selectRelevantAutoMemoryDocumentsByModel(mockConfig, 'hello', [], 2),
     ).resolves.toEqual([]);
     expect(runSideQuery).not.toHaveBeenCalled();
+  });
+
+  it('forwards caller abort signal to runSideQuery combined with timeout', async () => {
+    const callerController = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+
+    vi.mocked(runSideQuery).mockImplementation(async (_config, opts) => {
+      capturedSignal = opts.abortSignal;
+      return { selected_memories: [] };
+    });
+
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check preferences',
+      docs,
+      2,
+      [],
+      callerController.signal,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledTimes(1);
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(false);
+
+    callerController.abort();
+
+    await vi.waitFor(() => {
+      expect(capturedSignal!.aborted).toBe(true);
+    });
+  });
+
+  it('uses timeout-only abort signal when no caller signal provided', async () => {
+    vi.mocked(runSideQuery).mockResolvedValue({
+      selected_memories: [],
+    });
+
+    await selectRelevantAutoMemoryDocumentsByModel(
+      mockConfig,
+      'check preferences',
+      docs,
+      2,
+    );
+
+    expect(runSideQuery).toHaveBeenCalledWith(
+      mockConfig,
+      expect.objectContaining({
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('passes the fast model to runSideQuery when configured', async () => {
