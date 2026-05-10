@@ -17,6 +17,11 @@ import {
   createDebugLogger,
 } from '@qwen-code/qwen-code-core';
 import stripJsonComments from 'strip-json-comments';
+import {
+  stringify as stringifyComments,
+  parse as parseComments,
+} from 'comment-json';
+
 import { DefaultLight } from '../ui/themes/default-light.js';
 import { DefaultDark } from '../ui/themes/default.js';
 import { isWorkspaceTrusted } from './trustedFolders.js';
@@ -451,21 +456,79 @@ export class LoadedSettings {
    */
   setValueFullSave(scope: SettingScope, key: string, value: unknown): void {
     const settingsFile = this.forScope(scope);
+
+    // Apply the value to a copy of originalSettings so we can serialize
+    // the desired state.
+    const updatedSettings = structuredClone(settingsFile.originalSettings);
+    setNestedPropertySafe(updatedSettings, key, value);
+
+    try {
+      // Ensure the directory exists before writing.
+      const dirPath = path.dirname(settingsFile.path);
+      if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+      }
+
+      // Read the existing file to preserve comments via comment-json.
+      // If the file exists, parse it with comment-json (which preserves
+      // comments in the AST), replace the value on the parsed object, and
+      // stringify back. This preserves user comments while allowing key
+      // deletion (unlike applyUpdates which is merge-only).
+      let fileContent: string;
+      if (fs.existsSync(settingsFile.path)) {
+        const existingContent = fs.readFileSync(settingsFile.path, 'utf-8');
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = parseComments(existingContent) as Record<string, unknown>;
+        } catch {
+          // If the existing file has invalid JSON, fall back to writing
+          // the updated settings without comment preservation.
+          parsed = updatedSettings as Record<string, unknown>;
+        }
+        // Apply the full updated settings, replacing (not merging) the
+        // top-level keys. This ensures deleted keys actually disappear.
+        for (const k of Object.keys(updatedSettings)) {
+          parsed[k] = (updatedSettings as Record<string, unknown>)[k];
+        }
+        // Remove keys that are in the old file but not in the updated settings.
+        for (const k of Object.keys(parsed)) {
+          if (!(k in (updatedSettings as Record<string, unknown>))) {
+            delete parsed[k];
+          }
+        }
+        fileContent = stringifyComments(parsed, null, 2);
+      } else {
+        fileContent = stringifyComments(
+          updatedSettings as Record<string, unknown>,
+          null,
+          2,
+        );
+      }
+
+      // Validate JSON before writing to prevent corrupted settings files.
+      try {
+        parseComments(fileContent);
+      } catch (validationError) {
+        debugLogger.error(
+          'Error: Refusing to write settings file — the result would not be valid JSON.',
+        );
+        throw validationError;
+      }
+
+      writeWithBackupSync(settingsFile.path, fileContent);
+    } catch (writeError) {
+      debugLogger.error('Error saving settings file.');
+      debugLogger.error(
+        writeError instanceof Error ? writeError.message : String(writeError),
+      );
+      throw writeError;
+    }
+
+    // Only mutate the in-memory state after successful disk write,
+    // so that a write failure leaves memory consistent with disk.
     setNestedPropertySafe(settingsFile.settings, key, value);
     setNestedPropertySafe(settingsFile.originalSettings, key, value);
     this._merged = this.computeMergedSettings();
-    // Write originalSettings directly as the full file content.
-    // updateSettingsFilePreservingFormat → applyUpdates is a pure merge
-    // that only touches keys present in the updates object, so it can
-    // never delete keys that were removed from originalSettings.  Writing
-    // the full object ensures removed keys (e.g. deleted MCP servers)
-    // actually disappear from disk.
-    const dirPath = path.dirname(settingsFile.path);
-    if (!fs.existsSync(dirPath)) {
-      fs.mkdirSync(dirPath, { recursive: true });
-    }
-    const fileContent = JSON.stringify(settingsFile.originalSettings, null, 2);
-    writeWithBackupSync(settingsFile.path, fileContent);
   }
 
   /**

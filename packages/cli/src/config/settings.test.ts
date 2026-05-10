@@ -74,34 +74,32 @@ type TestSettings = Settings & {
 };
 
 vi.mock('node:fs', async (importOriginal) => {
-  // Get all the functions from the real 'fs' module
   const actualFs = await importOriginal<typeof fs>();
-
   return {
-    ...actualFs, // Keep all the real functions
-    // Now, just override the ones we need for the test
+    ...actualFs,
     existsSync: vi.fn(),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     renameSync: vi.fn(),
     mkdirSync: vi.fn(),
+    statSync: vi.fn(),
+    unlinkSync: vi.fn(),
     realpathSync: (p: string) => p,
   };
 });
 
 // Also mock 'fs' for compatibility
 vi.mock('fs', async (importOriginal) => {
-  // Get all the functions from the real 'fs' module
   const actualFs = await importOriginal<typeof fs>();
-
   return {
-    ...actualFs, // Keep all the real functions
-    // Now, just override the ones we need for the test
+    ...actualFs,
     existsSync: vi.fn(),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     renameSync: vi.fn(),
     mkdirSync: vi.fn(),
+    statSync: vi.fn(),
+    unlinkSync: vi.fn(),
     realpathSync: (p: string) => p,
   };
 });
@@ -118,12 +116,14 @@ describe('Settings Loading and Merging', () => {
   let mockFsExistsSync: Mocked<typeof fs.existsSync>;
   let mockStripJsonComments: Mocked<typeof stripJsonComments>;
   let mockFsMkdirSync: Mocked<typeof fs.mkdirSync>;
+  let mockFsStatSync: Mocked<typeof fs.statSync>;
 
   beforeEach(() => {
     vi.resetAllMocks();
 
     mockFsExistsSync = vi.mocked(fs.existsSync);
     mockFsMkdirSync = vi.mocked(fs.mkdirSync);
+    mockFsStatSync = vi.mocked(fs.statSync);
     mockStripJsonComments = vi.mocked(stripJsonComments);
 
     vi.mocked(osActual.homedir).mockReturnValue('/mock/home/user');
@@ -2637,6 +2637,163 @@ describe('Settings Loading and Merging', () => {
       expect(writtenContent.model.name).toBe('manually-added-model');
       expect(writtenContent.modelProviders.openai).toEqual(
         externallyModifiedUserSettingsContent.modelProviders.openai,
+      );
+    });
+  });
+
+  describe('setValueFullSave', () => {
+    // Helper: mock fs so writeWithBackupSync can operate.
+    // writeWithBackupSync checks existsSync → statSync → renameSync.
+    const mockFsForWrite = () => {
+      mockFsStatSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+      (fs.unlinkSync as Mock).mockImplementation(() => undefined);
+      (fs.renameSync as Mock).mockImplementation(() => undefined);
+    };
+
+    it('writes the full settings object to disk, removing deleted keys', () => {
+      (mockFsExistsSync as Mock).mockReturnValue(true);
+      mockFsForWrite();
+      const userSettingsContent = {
+        [SETTINGS_VERSION_KEY]: SETTINGS_VERSION,
+        mcpServers: {
+          'server-alpha': { command: 'echo alpha' },
+          'server-beta': { command: 'echo beta' },
+        },
+      };
+      (fs.readFileSync as Mock).mockImplementation(
+        (p: fs.PathOrFileDescriptor) => {
+          if (p === USER_SETTINGS_PATH)
+            return JSON.stringify(userSettingsContent);
+          return '{}';
+        },
+      );
+
+      const settings = loadSettings(MOCK_WORKSPACE_DIR);
+
+      settings.setValueFullSave(SettingScope.User, 'mcpServers', {
+        'server-alpha': { command: 'echo alpha' },
+      });
+
+      // writeWithBackupSync writes to a .tmp file first, then renames.
+      const writeCalls = (fs.writeFileSync as Mock).mock.calls.filter(
+        (call: unknown[]) => String(call[0]).endsWith('.tmp'),
+      );
+      const lastWriteCall = writeCalls.at(-1);
+      expect(lastWriteCall).toBeDefined();
+
+      const writtenContent = JSON.parse(String(lastWriteCall?.[1]));
+      expect(writtenContent.mcpServers).toEqual({
+        'server-alpha': { command: 'echo alpha' },
+      });
+      expect(writtenContent.mcpServers['server-beta']).toBeUndefined();
+    });
+
+    it('preserves user comments in settings.json via comment-json', () => {
+      (mockFsExistsSync as Mock).mockReturnValue(true);
+      mockFsForWrite();
+      const settingsWithComments = `{
+  // This is a comment
+  "mcpServers": {
+    "my-server": { "command": "echo hello" }
+  }
+}`;
+      (fs.readFileSync as Mock).mockImplementation(
+        (p: fs.PathOrFileDescriptor) => {
+          if (p === USER_SETTINGS_PATH) return settingsWithComments;
+          return '{}';
+        },
+      );
+
+      const settings = loadSettings(MOCK_WORKSPACE_DIR);
+
+      settings.setValueFullSave(SettingScope.User, 'mcpServers', {
+        'my-server': { command: 'echo hello' },
+      });
+
+      // writeWithBackupSync writes to a .tmp file first, then renames.
+      const writeCalls = (fs.writeFileSync as Mock).mock.calls.filter(
+        (call: unknown[]) => String(call[0]).endsWith('.tmp'),
+      );
+      const lastWriteCall = writeCalls.at(-1);
+      expect(lastWriteCall).toBeDefined();
+
+      const writtenContent = String(lastWriteCall?.[1]);
+      expect(writtenContent).toContain('// This is a comment');
+    });
+
+    it('updates in-memory state only after successful disk write', () => {
+      (mockFsExistsSync as Mock).mockReturnValue(true);
+      mockFsForWrite();
+      const userSettingsContent = {
+        [SETTINGS_VERSION_KEY]: SETTINGS_VERSION,
+        mcpServers: {
+          'old-server': { command: 'echo old' },
+        },
+      };
+      (fs.readFileSync as Mock).mockImplementation(
+        (p: fs.PathOrFileDescriptor) => {
+          if (p === USER_SETTINGS_PATH)
+            return JSON.stringify(userSettingsContent);
+          return '{}';
+        },
+      );
+
+      const settings = loadSettings(MOCK_WORKSPACE_DIR);
+
+      // Make writeFileSync throw to simulate disk full during writeWithBackupSync.
+      (fs.writeFileSync as Mock).mockImplementation(
+        (_p: fs.PathOrFileDescriptor) => {
+          throw new Error('disk full');
+        },
+      );
+
+      expect(() => {
+        settings.setValueFullSave(SettingScope.User, 'mcpServers', {
+          'new-server': { command: 'echo new' },
+        });
+      }).toThrow('disk full');
+
+      // In-memory state should NOT have been updated since the write failed.
+      expect(
+        (settings.user.settings as Record<string, unknown>)['mcpServers'],
+      ).toEqual({
+        'old-server': { command: 'echo old' },
+      });
+    });
+
+    it('creates the settings directory if it does not exist', () => {
+      (mockFsExistsSync as Mock).mockReturnValue(true);
+      mockFsForWrite();
+      const userSettingsContent = {
+        [SETTINGS_VERSION_KEY]: SETTINGS_VERSION,
+        mcpServers: {},
+      };
+      (fs.readFileSync as Mock).mockImplementation(
+        (p: fs.PathOrFileDescriptor) => {
+          if (p === USER_SETTINGS_PATH)
+            return JSON.stringify(userSettingsContent);
+          return '{}';
+        },
+      );
+
+      const settings = loadSettings(MOCK_WORKSPACE_DIR);
+
+      // Make existsSync return false for the directory but true for the file.
+      (mockFsExistsSync as Mock).mockImplementation((p: fs.PathLike) => {
+        const pathStr = String(p);
+        if (pathStr === USER_SETTINGS_PATH) return true;
+        if (pathStr === `${USER_SETTINGS_PATH}.tmp`) return false;
+        // Directory doesn't exist.
+        return false;
+      });
+
+      settings.setValueFullSave(SettingScope.User, 'mcpServers', {
+        'new-server': { command: 'echo new' },
+      });
+
+      expect(mockFsMkdirSync).toHaveBeenCalledWith(
+        expect.stringContaining('.qwen'),
+        { recursive: true },
       );
     });
   });

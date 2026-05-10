@@ -181,7 +181,7 @@ async function addMcpServer(
   const mcpServers = {
     ...existingMcpServers,
     [name]: newServer,
-  } as Record<string, unknown> as typeof existingMcpServers;
+  } as typeof existingMcpServers;
 
   // Use setValueFullSave so the full settings object is written to disk,
   // ensuring that stale server entries and removed config keys (e.g. old
