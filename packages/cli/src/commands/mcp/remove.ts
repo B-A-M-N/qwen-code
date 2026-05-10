@@ -7,7 +7,7 @@
 // File for 'qwen mcp remove' command
 import type { CommandModule } from 'yargs';
 import { loadSettings, SettingScope } from '../../config/settings.js';
-import { writeStdoutLine } from '../../utils/stdioHelpers.js';
+import { writeStdoutLine, writeStderrLine } from '../../utils/stdioHelpers.js';
 import { MCPOAuthTokenStorage } from '@qwen-code/qwen-code-core';
 
 async function removeMcpServer(
@@ -17,12 +17,22 @@ async function removeMcpServer(
   },
 ) {
   const { scope } = options;
+  const settings = loadSettings();
+  const inHome = settings.workspace.path === settings.user.path;
+
+  if (scope === 'project' && inHome) {
+    writeStderrLine(
+      'Error: Please use --scope user to edit settings in the home directory.',
+    );
+    process.exit(1);
+  }
+
   const settingsScope =
     scope === 'user' ? SettingScope.User : SettingScope.Workspace;
-  const settings = loadSettings();
 
-  const existingSettings = settings.forScope(settingsScope).settings;
-  const existingMcpServers = existingSettings.mcpServers || {};
+  const existingSettings = settings.forScope(settingsScope).originalSettings;
+  const existingMcpServers =
+    (existingSettings as Record<string, unknown>).mcpServers || {};
 
   if (!existingMcpServers[name]) {
     writeStdoutLine(`Server "${name}" not found in ${scope} settings.`);

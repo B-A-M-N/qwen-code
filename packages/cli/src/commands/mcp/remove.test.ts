@@ -67,8 +67,13 @@ describe('mcp remove command', () => {
       },
     };
     mockedLoadSettings.mockReturnValue({
-      forScope: () => ({ settings: mockSettings, originalSettings: { ...mockSettings } }),
+      forScope: () => ({
+        settings: mockSettings,
+        originalSettings: { ...mockSettings },
+      }),
       setValueFullSave: mockSetValueFullSave,
+      workspace: { path: '/home/user' },
+      user: { path: '/home/user' },
     });
     mockWriteStdoutLine.mockClear();
     mockDeleteCredentials.mockClear();
@@ -128,8 +133,13 @@ describe('mcp remove command', () => {
       },
     };
     mockedLoadSettings.mockReturnValue({
-      forScope: () => ({ settings: mockSettings, originalSettings: { ...mockSettings } }),
+      forScope: () => ({
+        settings: mockSettings,
+        originalSettings: { ...mockSettings },
+      }),
       setValueFullSave: mockSetValueFullSave,
+      workspace: { path: '/home/user' },
+      user: { path: '/home/user' },
     });
 
     await parser.parseAsync('remove server-beta');

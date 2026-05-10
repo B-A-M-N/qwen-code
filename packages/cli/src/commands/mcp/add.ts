@@ -166,8 +166,9 @@ async function addMcpServer(
       break;
   }
 
-  const existingSettings = settings.forScope(settingsScope).settings;
-  const existingMcpServers = existingSettings.mcpServers || {};
+  const existingSettings = settings.forScope(settingsScope).originalSettings;
+  const existingMcpServers =
+    (existingSettings as Record<string, unknown>).mcpServers || {};
 
   const isExistingServer = !!existingMcpServers[name];
   if (isExistingServer) {
