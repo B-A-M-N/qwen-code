@@ -16,6 +16,7 @@ import {
 import type { Settings } from './settings.js';
 import stripJsonComments from 'strip-json-comments';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
+import { parse, stringify } from 'comment-json';
 
 export const TRUSTED_FOLDERS_FILENAME = 'trustedFolders.json';
 export const SETTINGS_DIRECTORY_NAME = '.qwen';
@@ -179,11 +180,56 @@ export function saveTrustedFolders(
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
-    fs.writeFileSync(
-      trustedFoldersFile.path,
-      JSON.stringify(trustedFoldersFile.config, null, 2),
-      { encoding: 'utf-8', mode: 0o600 },
-    );
+    const filePath = trustedFoldersFile.path;
+
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify(trustedFoldersFile.config, null, 2),
+        { encoding: 'utf-8', mode: 0o600 },
+      );
+      return;
+    }
+
+    const originalContent = fs.readFileSync(filePath, 'utf-8');
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = parse(originalContent) as Record<string, unknown>;
+    } catch {
+      // If the existing file has invalid JSON (e.g. corrupted), fall back
+      // to a full rewrite so the file is always left in a valid state.
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify(trustedFoldersFile.config, null, 2),
+        { encoding: 'utf-8', mode: 0o600 },
+      );
+      return;
+    }
+
+    // Merge the full desired config into the parsed structure, preserving
+    // any comments the user added to the file.
+    // Mutate in-place so comment-json's AST retains comment metadata.
+    for (const key of Object.keys(trustedFoldersFile.config)) {
+      parsed[key] = trustedFoldersFile.config[key];
+    }
+
+    const updatedContent = stringify(parsed, null, 2);
+
+    // Validate the output before writing to disk.
+    try {
+      parse(updatedContent);
+    } catch {
+      writeStderrLine(
+        'Error: Refusing to write trustedFolders.json — the result would not be valid JSON.',
+      );
+      return;
+    }
+
+    fs.writeFileSync(filePath, updatedContent, {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   } catch (error) {
     writeStderrLine('Error saving trusted folders file.');
     writeStderrLine(error instanceof Error ? error.message : String(error));

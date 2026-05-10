@@ -196,6 +196,62 @@ describe('Trusted Folders Loading', () => {
       { encoding: 'utf-8', mode: 0o600 },
     );
   });
+
+  it('setValue should preserve comments in trustedFolders.json', () => {
+    const userPath = getTrustedFoldersPath();
+    const contentWithComments = `{
+  // Trusted project folder
+  "/existing/path": "TRUST_FOLDER"
+}`;
+    (mockFsExistsSync as Mock).mockImplementation((p) => p === userPath);
+    (fs.readFileSync as Mock).mockImplementation((p) => {
+      if (p === userPath) return contentWithComments;
+      return '{}';
+    });
+
+    resetTrustedFoldersForTesting();
+    const loadedFolders = loadTrustedFolders();
+    loadedFolders.setValue('/new/path', TrustLevel.TRUST_FOLDER);
+
+    expect(loadedFolders.user.config['/new/path']).toBe(
+      TrustLevel.TRUST_FOLDER,
+    );
+
+    // Verify the written content preserves the comment
+    const writeCalls = (mockFsWriteFileSync as Mock).mock.calls;
+    const writeCall = writeCalls.find((call) => call[0] === userPath);
+    expect(writeCall).toBeDefined();
+    const writtenContent = writeCall![1] as string;
+    expect(writtenContent).toContain('// Trusted project folder');
+    expect(writtenContent).toContain('"/new/path"');
+    expect(writtenContent).toContain('"/existing/path"');
+    // Verify file mode is still 0o600
+    expect(writeCall![2]).toEqual({
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+  });
+
+  it('setValue should handle corrupted JSON by falling back to full rewrite', () => {
+    const userPath = getTrustedFoldersPath();
+    (mockFsExistsSync as Mock).mockImplementation((p) => p === userPath);
+    (fs.readFileSync as Mock).mockImplementation((p) => {
+      if (p === userPath) return '{ invalid json !!! }';
+      return '{}';
+    });
+
+    resetTrustedFoldersForTesting();
+    const loadedFolders = loadTrustedFolders();
+    loadedFolders.setValue('/new/path', TrustLevel.TRUST_FOLDER);
+
+    const writeCalls = (mockFsWriteFileSync as Mock).mock.calls;
+    const writeCall = writeCalls.find((call) => call[0] === userPath);
+    expect(writeCall).toBeDefined();
+    const writtenContent = writeCall![1] as string;
+    // Should be valid JSON with the new config
+    expect(() => JSON.parse(writtenContent)).not.toThrow();
+    expect(writtenContent).toContain('"/new/path"');
+  });
 });
 
 describe('isWorkspaceTrusted', () => {
