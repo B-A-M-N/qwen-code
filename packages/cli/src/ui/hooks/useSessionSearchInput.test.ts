@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import {
+  isDeletionKey,
   isPrintableSearchChar,
   useSessionSearchInput,
 } from './useSessionSearchInput.js';
@@ -126,6 +127,34 @@ describe('isDeletionKey', () => {
       false,
     );
     expect(isPrintableSearchChar(k({ name: '', sequence: '\b' }))).toBe(false);
+  });
+
+  it('does not treat Ctrl+H (BS byte + ctrl) as a deletion key', () => {
+    // Ctrl+H delivers name:'h', ctrl:true, sequence:'\b' on many terminals.
+    // The ctrl guard must prevent this from being treated as Backspace.
+    expect(isDeletionKey(k({ name: 'h', sequence: '\b', ctrl: true }))).toBe(
+      false,
+    );
+  });
+
+  it('does not treat Meta+DEL byte as a deletion key', () => {
+    expect(isDeletionKey(k({ name: '', sequence: '\x7f', meta: true }))).toBe(
+      false,
+    );
+  });
+
+  it('does not treat Ctrl+Backspace (name + ctrl) as a deletion key', () => {
+    expect(
+      isDeletionKey(k({ name: 'backspace', sequence: '', ctrl: true })),
+    ).toBe(false);
+  });
+
+  it('still recognises plain Backspace by name without modifiers', () => {
+    expect(isDeletionKey(k({ name: 'backspace', sequence: '' }))).toBe(true);
+  });
+
+  it('still recognises plain Delete by name without modifiers', () => {
+    expect(isDeletionKey(k({ name: 'delete' }))).toBe(true);
   });
 });
 
@@ -417,5 +446,65 @@ describe('useSessionSearchInput', () => {
     });
     expect(result.current.searchQuery).toBe('');
     expect(onExitToList).not.toHaveBeenCalled();
+  });
+
+  it('end-to-end: raw DEL byte pops last char and triggers onExitToList', () => {
+    // Simulates a Windows terminal that delivers Backspace as raw DEL
+    // byte (0x7F) without setting key.name.  The full flow is:
+    // seed query → raw DEL byte → query empty + onExitToList called.
+    const onExitToList = vi.fn();
+    const { result } = renderHook(() =>
+      useSessionSearchInput({ onExitToList }),
+    );
+    act(() => {
+      result.current.handleSearchKey(k({ name: 'a', sequence: 'a' }));
+    });
+    expect(result.current.searchQuery).toBe('a');
+    // Raw DEL byte — the Windows Backspace path
+    act(() => {
+      result.current.handleSearchKey(k({ name: '', sequence: '\x7f' }));
+    });
+    expect(result.current.searchQuery).toBe('');
+    expect(onExitToList).toHaveBeenCalledTimes(1);
+  });
+
+  it('end-to-end: raw BS byte pops last char and triggers onExitToList', () => {
+    // Alternate Windows Backspace byte (0x08).
+    const onExitToList = vi.fn();
+    const { result } = renderHook(() =>
+      useSessionSearchInput({ onExitToList }),
+    );
+    act(() => {
+      result.current.handleSearchKey(k({ name: 'x', sequence: 'x' }));
+    });
+    expect(result.current.searchQuery).toBe('x');
+    act(() => {
+      result.current.handleSearchKey(k({ name: '', sequence: '\b' }));
+    });
+    expect(result.current.searchQuery).toBe('');
+    expect(onExitToList).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the latest onExitToList when parent re-renders', () => {
+    // Verifies the ref-based indirection: if the parent passes a new
+    // onExitToList callback, the hook must use the latest one, not
+    // the stale initial reference.
+    const cb1 = vi.fn();
+    const cb2 = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ cb }) => useSessionSearchInput({ onExitToList: cb }),
+      { initialProps: { cb: cb1 } },
+    );
+    act(() => {
+      result.current.setSearchQuery('x');
+    });
+    // Switch to a new callback via re-render.
+    rerender({ cb: cb2 });
+    // Clear the query — should invoke cb2, not cb1.
+    act(() => {
+      result.current.setSearchQuery('');
+    });
+    expect(cb1).not.toHaveBeenCalled();
+    expect(cb2).toHaveBeenCalledTimes(1);
   });
 });

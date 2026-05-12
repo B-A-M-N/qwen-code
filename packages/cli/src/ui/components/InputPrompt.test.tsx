@@ -249,10 +249,10 @@ describe('InputPrompt', () => {
 
   describe('prompt suggestions', () => {
     it('does not accept the prompt suggestion on shift+tab', async () => {
-      const { stdin, unmount } = renderWithProviders(
+      const { stdin, lastFrame, unmount } = renderWithProviders(
         <InputPrompt {...props} promptSuggestion="commit this" />,
       );
-      await wait(350);
+      await waitFor(() => expect(lastFrame()).toBeTruthy());
 
       stdin.write('\x1b[Z'); // shift+tab
       await wait();
@@ -271,10 +271,10 @@ describe('InputPrompt', () => {
         },
       ] as UseCommandCompletionReturn['suggestions'];
 
-      const { stdin, unmount } = renderWithProviders(
+      const { stdin, lastFrame, unmount } = renderWithProviders(
         <InputPrompt {...props} promptSuggestion="commit this" />,
       );
-      await wait(350);
+      await waitFor(() => expect(lastFrame()).toBeTruthy());
 
       stdin.write('\t');
       await wait();
@@ -1212,8 +1212,9 @@ describe('InputPrompt', () => {
     await wait();
 
     stdin.write('/export md');
-    await wait(350);
-    expect(stripAnsi(lastFrame() ?? '')).toContain('/export md');
+    await waitFor(() =>
+      expect(stripAnsi(lastFrame() ?? '')).toContain('/export md'),
+    );
 
     // Pressing Down must cycle to the NEXT format (json).
     stdin.write('\u001B[B');
